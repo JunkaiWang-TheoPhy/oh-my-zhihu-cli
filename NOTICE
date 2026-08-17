@@ -1,0 +1,11 @@
+This repository is a derivative work of BAIGUANGMEI/zhihu-cli:
+https://github.com/BAIGUANGMEI/zhihu-cli
+
+The upstream project was originally distributed under the Apache License 2.0.
+Its original license text is preserved in LICENSE-APACHE-2.0. This derivative
+project is distributed under the GNU Affero General Public License, version 3
+only, as described in LICENSE.
+
+The private extensions in this repository were prepared for the account owner
+and must not contain Zhihu cookies, tokens, private draft exports, or other
+personal credentials.

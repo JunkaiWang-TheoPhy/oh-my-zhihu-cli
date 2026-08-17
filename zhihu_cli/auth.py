@@ -17,19 +17,24 @@ import logging
 import time
 from pathlib import Path
 
+import click
 import requests
 
 from .config import (
     CONFIG_DIR,
     COOKIE_FILE,
+    DEFAULT_PROFILE,
     DEFAULT_TIMEOUT,
     get_browser_headers,
+    get_cookie_file,
+    get_qrcode_image_path,
     QRCODE_IMAGE_PATH,
     REQUIRED_COOKIES,
     ZHIHU_BASE_URL,
     ZHIHU_LOGIN_URL,
     ZHIHU_OAUTH_CAPTCHA,
     ZHIHU_QRCODE_API,
+    validate_profile,
 )
 from .display import console, print_error, print_hint, print_info, print_success, print_warning
 from .exceptions import LoginError
@@ -37,19 +42,36 @@ from .exceptions import LoginError
 logger = logging.getLogger(__name__)
 
 
-def get_saved_cookie_string() -> str | None:
+def _active_profile(profile: str | None = None) -> str:
+    """Resolve the selected profile from an explicit value or Click context."""
+    if profile is not None:
+        return validate_profile(profile)
+    try:
+        ctx = click.get_current_context(silent=True)
+        if ctx is not None:
+            root = ctx.find_root()
+            profile = (root.params or {}).get("profile")
+            if profile is None:
+                profile = (root.obj or {}).get("profile")
+    except RuntimeError:
+        profile = None
+    return validate_profile(profile or DEFAULT_PROFILE)
+
+
+def get_saved_cookie_string(profile: str | None = None) -> str | None:
     """Load only saved cookies from local config file.
 
     This helper never triggers browser extraction and has no write side effects.
     """
-    return _load_saved_cookies()
+    return _load_saved_cookies(_active_profile(profile))
 
 
-def get_cookie_string() -> str | None:
+def get_cookie_string(profile: str | None = None) -> str | None:
     """Try loading saved cookies. Returns cookie string or None."""
-    cookie = _load_saved_cookies()
+    active_profile = _active_profile(profile)
+    cookie = _load_saved_cookies(active_profile)
     if cookie:
-        logger.info("Loaded saved cookies from %s", COOKIE_FILE)
+        logger.info("Loaded saved cookies from %s", get_cookie_file(active_profile))
         return cookie
     return None
 
@@ -74,13 +96,14 @@ def _fetch_missing_cookies(cookie_dict: dict) -> dict:
     return out
 
 
-def _load_saved_cookies() -> str | None:
+def _load_saved_cookies(profile: str = DEFAULT_PROFILE) -> str | None:
     """Load cookies from saved file. If _xsrf or d_c0 are missing but z_c0 exists, fetch them from Zhihu and save."""
-    if not COOKIE_FILE.exists():
+    cookie_file = get_cookie_file(profile)
+    if not cookie_file.exists():
         return None
 
     try:
-        data = json.loads(COOKIE_FILE.read_text(encoding="utf-8"))
+        data = json.loads(cookie_file.read_text(encoding="utf-8"))
         cookies = data.get("cookies", {})
         if _has_required_cookies(cookies):
             return _dict_to_cookie_str(cookies)
@@ -88,7 +111,7 @@ def _load_saved_cookies() -> str | None:
         if "z_c0" in cookies and (REQUIRED_COOKIES - cookies.keys()):
             merged = _fetch_missing_cookies(cookies)
             if _has_required_cookies(merged):
-                save_cookies(_dict_to_cookie_str(merged))
+                save_cookies(_dict_to_cookie_str(merged), profile=profile)
                 return _dict_to_cookie_str(merged)
     except (json.JSONDecodeError, KeyError) as e:
         logger.warning("Failed to load saved cookies: %s", e)
@@ -308,10 +331,11 @@ def _save_qrcode_image(qr_text: str) -> None:
     except ImportError:
         return
     try:
-        CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+        image_path = get_qrcode_image_path(_active_profile())
+        image_path.parent.mkdir(parents=True, exist_ok=True)
         img = qrcode.make(qr_text)
-        img.save(QRCODE_IMAGE_PATH)
-        print_hint(f"二维码已保存至: [bold]{QRCODE_IMAGE_PATH}[/bold]（AI Agent 可读取并发送给用户扫码）")
+        img.save(image_path)
+        print_hint(f"二维码已保存至: [bold]{image_path}[/bold]（AI Agent 可读取并发送给用户扫码）")
     except Exception as e:
         logger.debug("Failed to save QR code image: %s", e)
 
@@ -333,29 +357,31 @@ def _display_qr_text_in_terminal(qr_text: str) -> bool:
         return False
 
 
-def save_cookies(cookie_str: str):
+def save_cookies(cookie_str: str, profile: str | None = None):
     """Save cookies to config file."""
-    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    cookie_file = get_cookie_file(_active_profile(profile))
+    cookie_file.parent.mkdir(parents=True, exist_ok=True)
 
     cookies = cookie_str_to_dict(cookie_str)
     data = {"cookies": cookies}
 
-    COOKIE_FILE.write_text(
+    cookie_file.write_text(
         json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8"
     )
     try:
-        COOKIE_FILE.chmod(0o600)
+        cookie_file.chmod(0o600)
     except OSError:
-        logger.debug("Failed to set permissions on %s", COOKIE_FILE)
-    logger.info("Cookies saved to %s", COOKIE_FILE)
+        logger.debug("Failed to set permissions on %s", cookie_file)
+    logger.info("Cookies saved to %s", cookie_file)
 
 
-def clear_cookies():
+def clear_cookies(profile: str | None = None):
     """Remove saved cookies (for logout)."""
+    cookie_file = get_cookie_file(_active_profile(profile))
     removed = []
-    if COOKIE_FILE.exists():
-        COOKIE_FILE.unlink()
-        removed.append(COOKIE_FILE.name)
+    if cookie_file.exists():
+        cookie_file.unlink()
+        removed.append(cookie_file.name)
     if removed:
         logger.info("Removed: %s", ", ".join(removed))
     return removed

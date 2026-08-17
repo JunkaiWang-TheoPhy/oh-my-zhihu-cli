@@ -44,7 +44,7 @@ class TestCliGroup:
     def test_version(self, runner):
         result = runner.invoke(cli, ["--version"])
         assert result.exit_code == 0
-        assert "0.1.0" in result.output
+        assert "0.3.0" in result.output
 
     def test_all_commands_registered(self, runner):
         result = runner.invoke(cli, ["--help"])
@@ -90,7 +90,10 @@ class TestLogoutCommand:
 
 class TestLoginCommand:
     def test_login_with_valid_cookie(self, runner, tmp_config_dir):
-        result = runner.invoke(cli, ["login", "--cookie", "z_c0=test_abc"])
+        result = runner.invoke(
+            cli,
+            ["login", "--cookie", "z_c0=test_abc; _xsrf=xsrf_123; d_c0=dc0_456"],
+        )
         assert result.exit_code == 0
         assert "Cookie saved" in result.output
 
@@ -172,7 +175,7 @@ class TestHotCommand:
         with patch(_CLIENT_PATCH, return_value=mc):
             result = runner.invoke(cli, ["hot", "--limit", "2"])
             assert result.exit_code == 0
-            assert "Trending" in result.output
+            assert "Hot question 1" in result.output
 
     def test_hot_json(self, runner, saved_cookies, mock_hot_list):
         mc = _make_mock_client(get_hot_list=mock_hot_list)

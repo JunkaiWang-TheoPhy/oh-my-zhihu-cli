@@ -1,8 +1,8 @@
 ---
 name: zhihu-cli
-description: "知乎 CLI (pyzhihu-cli)：搜索、热榜、问题/回答/评论、推荐 Feed、用户资料、发想法/提问/文章、删自己的内容、点赞关注、收藏与通知。Agent 代执行 zhihu 命令，Cookie 仅存本地。"
-author: BAIGUANGMEI
-version: "0.2.6"
+description: "私有知乎 CLI：搜索、草稿、文章/想法详情、收藏夹、备份、profile、只读保护与安全写入。Agent 代执行 zhihu 命令，Cookie 仅存本地。"
+author: Junkai Wang
+version: "0.3.0"
 tags:
   - zhihu
   - cli
@@ -14,9 +14,9 @@ tags:
 
 ## 前提
 
-- **已安装**：`zhihu` 在 PATH 中（`uv tool install pyzhihu-cli` / `pipx install pyzhihu-cli` / `pip install pyzhihu-cli`）。
+- **已安装**：`zhihu` 在 PATH 中（推荐从本私有仓库执行 `uv tool install --editable .`）。
 - **路径**：配置与二维码路径 — **Linux/macOS**：`~/.zhihu-cli/`（如 `~/.zhihu-cli/cookies.json`、`~/.zhihu-cli/login_qrcode.png`）；**Windows**：`%USERPROFILE%\.zhihu-cli\`（如 `%USERPROFILE%\.zhihu-cli\cookies.json`、`%USERPROFILE%\.zhihu-cli\login_qrcode.png`）。
-- **配置**：登录态存于上述 `cookies.json`；**不得将 Cookie 上传或写入对话/日志**。
+- **配置**：登录态存于上述 `cookies.json`；支持 `--profile`；**不得将 Cookie 上传或写入对话/日志**。
 - **登录方式**：仅两种 — **扫码** `zhihu login --qrcode`、**粘贴 Cookie** `zhihu login --cookie "z_c0=...; _xsrf=...; d_c0=..."`。
 - **扫码时**：二维码会生成到上述路径的 `login_qrcode.png`。若用 OpenClaw 发给用户，须先**复制到 OpenClaw 工作目录的 media 文件夹**再 `openclaw message send --media <media 路径>`。
 
@@ -24,7 +24,7 @@ tags:
 
 ## Instruction Scope
 
-本技能仅限：在用户本机调用已安装的 `zhihu` 命令，执行搜索、热榜、问题/回答/评论、推荐 Feed、用户资料、发想法/提问/文章、删除自己的内容、点赞关注、收藏与通知等操作；在用户请求扫码登录且已配置 OpenClaw 时，可将二维码图片经 OpenClaw 发送至用户指定渠道。不包含：代用户将 Cookie 上传至任何第三方、访问非知乎域名、或超出上述命令范围的操作。
+本技能仅限：在用户本机调用已安装的 `zhihu` 命令，执行搜索、热榜、问题/回答/评论、推荐 Feed、用户资料、文章/想法详情、草稿、收藏夹、备份、发想法/提问/文章、删除自己的内容、点赞关注、收藏与通知等操作；在用户请求扫码登录且已配置 OpenClaw 时，可将二维码图片经 OpenClaw 发送至用户指定渠道。不包含：代用户将 Cookie 上传至任何第三方、访问非知乎域名、或超出上述命令范围的操作。
 
 ---
 
@@ -42,6 +42,7 @@ tags:
   - `pipx install pyzhihu-cli`
   - `pip install pyzhihu-cli`
 - **更新**：按安装方式执行 `uv tool upgrade pyzhihu-cli`、`pipx upgrade pyzhihu-cli` 或 `pip install -U pyzhihu-cli`。用户问「升级/更新 zhihu」时提示其执行对应命令；不确定安装方式时可三种都给出。
+- **本私有版本更新**：在仓库目录执行 `git pull && uv tool install --editable .`。
 - **版本**：`zhihu --version` 查看当前版本。
 
 ---
@@ -69,6 +70,7 @@ tags:
 | 热榜 | `zhihu hot [--limit N] [--answers N] [--json]` |
 | 问题 | `zhihu question <id> [--json]`；回答列表 `zhihu answers <id> [--limit N] [--sort default/created] [--json]` |
 | 回答详情 | `zhihu answer <id> [--comments] [--limit N] [--json]`（评论默认全部，`--limit 0` 为全部） |
+| 文章 / 想法详情 | `zhihu --readonly article-read <id>` / `zhihu --readonly pin-read <id>` |
 | 用户 | `zhihu user <url_token> [--json]`；`user-answers` / `user-articles` / `followers` / `following` 均支持 `--limit N --json` |
 | 推荐 / 话题 | `zhihu feed [--limit N] [--json]`；`zhihu feeds [--limit N] [--comment-limit N]`；`zhihu topic <id> [--json]` |
 | 赞同 | `zhihu vote <answer_id>`；取消 `zhihu vote <answer_id> --neutral` |
@@ -78,6 +80,12 @@ tags:
 | 发文章 | `zhihu article "标题" "正文" [-t 话题id ...] [-i 图 ...]` |
 | 删提问/想法/文章 | `zhihu delete-question <id>` / `delete-pin <id>` / `delete-article <id>` [-y] |
 | 收藏 / 通知 | `zhihu collections [--limit N] [--json]`；`zhihu notifications [--limit N] [--offset M] [--json]` |
+| 收藏夹内容 | `zhihu --readonly collection <collection_id>` |
+| 草稿 | `zhihu --readonly drafts [--type article/idea/answer/video] [--all]` |
+| 草稿备份 / diff | `zhihu --readonly drafts-backup <dir>`；`zhihu drafts-diff <before> <after>` |
+| profile | `zhihu profiles`；`zhihu --profile <name> ...` |
+| 只读模式 | `zhihu --readonly <command>` 或 `--read-only` |
+| 安全写入 | 写入命令使用 `--dry-run`；回答/评论需 `--execute` |
 | 退出 | `zhihu logout` |
 | 版本 / 升级 | `zhihu --version`；升级见上规则 6 |
 

@@ -27,6 +27,16 @@ Thumbs.db
 
 # Config (local cookies)
 cookies.json
+**/cookies.json
+**/login_qrcode.png
+.zhihu-cli/
+
+# Local exports and private content
+backups/
+zhihu-backup/
+*.cookies
+*.session
+.env
 
 # Temp
 *.tmp
