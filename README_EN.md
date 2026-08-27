@@ -1,6 +1,16 @@
-# oh-my-zhihu-cli
+<h1 align="center">oh-my-zhihu-cli</h1>
 
-[中文 README](README.md)
+<p align="center">
+  <a href="README.md">🇨🇳 中文</a>
+  <span>&nbsp;·&nbsp;</span>
+  <strong>🇬🇧 English</strong>
+</p>
+
+<p align="center">
+  <a href="https://github.com/JunkaiWang-TheoPhy/oh-my-zhihu-cli/actions/workflows/ci.yml"><img src="https://github.com/JunkaiWang-TheoPhy/oh-my-zhihu-cli/actions/workflows/ci.yml/badge.svg" alt="CI status"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0-blue.svg" alt="AGPL-3.0 license"></a>
+  <img src="https://img.shields.io/badge/version-0.3.0-1772F6.svg" alt="Version 0.3.0">
+</p>
 
 A command-line client for personal Zhihu workflows. This project is based on
 [BAIGUANGMEI/zhihu-cli](https://github.com/BAIGUANGMEI/zhihu-cli) and adds draft

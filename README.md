@@ -1,6 +1,16 @@
-# oh-my-zhihu-cli
+<h1 align="center">oh-my-zhihu-cli</h1>
 
-[English README](README_EN.md)
+<p align="center">
+  <strong>🇨🇳 中文</strong>
+  <span>&nbsp;·&nbsp;</span>
+  <a href="README_EN.md">🇬🇧 English</a>
+</p>
+
+<p align="center">
+  <a href="https://github.com/JunkaiWang-TheoPhy/oh-my-zhihu-cli/actions/workflows/ci.yml"><img src="https://github.com/JunkaiWang-TheoPhy/oh-my-zhihu-cli/actions/workflows/ci.yml/badge.svg" alt="CI status"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0-blue.svg" alt="AGPL-3.0 license"></a>
+  <img src="https://img.shields.io/badge/version-0.3.0-1772F6.svg" alt="Version 0.3.0">
+</p>
 
 一个面向个人账号的知乎命令行工具。项目基于上游
 [BAIGUANGMEI/zhihu-cli](https://github.com/BAIGUANGMEI/zhihu-cli)，并扩展了草稿读取、只读保护、profile、多格式备份和安全写入流程。
