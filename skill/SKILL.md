@@ -1,6 +1,6 @@
 ---
 name: zhihu-cli
-description: "私有知乎 CLI：搜索、草稿、文章/想法详情、收藏夹、备份、profile、只读保护与安全写入。Agent 代执行 zhihu 命令，Cookie 仅存本地。"
+description: "社区版知乎 CLI：搜索、草稿、文章/想法详情、收藏夹、备份、profile、只读保护与安全写入。Agent 代执行 zhihu 命令，Cookie 仅存本地。"
 author: Junkai Wang
 version: "0.3.0"
 tags:
@@ -14,7 +14,7 @@ tags:
 
 ## 前提
 
-- **已安装**：`zhihu` 在 PATH 中（推荐从本私有仓库执行 `uv tool install --editable .`）。
+- **已安装**：`zhihu` 在 PATH 中（推荐从 `JunkaiWang-TheoPhy/oh-my-zhihu-cli` 执行 `uv tool install --editable .`）。
 - **路径**：配置与二维码路径 — **Linux/macOS**：`~/.zhihu-cli/`（如 `~/.zhihu-cli/cookies.json`、`~/.zhihu-cli/login_qrcode.png`）；**Windows**：`%USERPROFILE%\.zhihu-cli\`（如 `%USERPROFILE%\.zhihu-cli\cookies.json`、`%USERPROFILE%\.zhihu-cli\login_qrcode.png`）。
 - **配置**：登录态存于上述 `cookies.json`；支持 `--profile`；**不得将 Cookie 上传或写入对话/日志**。
 - **登录方式**：仅两种 — **扫码** `zhihu login --qrcode`、**粘贴 Cookie** `zhihu login --cookie "z_c0=...; _xsrf=...; d_c0=..."`。
@@ -38,11 +38,9 @@ tags:
 ## 安装与更新
 
 - **安装**（任选其一）：
-  - `uv tool install pyzhihu-cli`
-  - `pipx install pyzhihu-cli`
-  - `pip install pyzhihu-cli`
-- **更新**：按安装方式执行 `uv tool upgrade pyzhihu-cli`、`pipx upgrade pyzhihu-cli` 或 `pip install -U pyzhihu-cli`。用户问「升级/更新 zhihu」时提示其执行对应命令；不确定安装方式时可三种都给出。
-- **本私有版本更新**：在仓库目录执行 `git pull && uv tool install --editable .`。
+  - `git clone https://github.com/JunkaiWang-TheoPhy/oh-my-zhihu-cli.git && cd oh-my-zhihu-cli && uv tool install --editable .`
+  - `uv tool install git+https://github.com/JunkaiWang-TheoPhy/oh-my-zhihu-cli.git`
+- **更新**：在仓库目录执行 `git pull && uv tool install --editable . --force`。
 - **版本**：`zhihu --version` 查看当前版本。
 
 ---
@@ -54,7 +52,7 @@ tags:
 3. **需登录时**：先 `zhihu status`；未登录则 `zhihu login --qrcode` 或引导用户 `zhihu login --cookie "..."`。
 4. **扫码登录**：执行 `zhihu login --qrcode` 后，若本轮未发过二维码且用户已配置 OpenClaw → 先将二维码复制到 OpenClaw 工作目录的 `media` 文件夹，再 `openclaw message send --channel <渠道> --target <目标> --media <media 路径>/login_qrcode.png --message "请用知乎 App 扫码并确认登录"`；**保持登录进程不中断**直到成功/失败/超时；用户说「重新登录/换号」则中断当前进程再重新执行登录。**复制步骤**：Linux/macOS：`mkdir -p ~/.openclaw/workspace/media && cp ~/.zhihu-cli/login_qrcode.png ~/.openclaw/workspace/media/`；Windows：`mkdir "%USERPROFILE%\.openclaw\workspace\media" 2>nul & copy "%USERPROFILE%\.zhihu-cli\login_qrcode.png" "%USERPROFILE%\.openclaw\workspace\media\login_qrcode.png"`（若 OpenClaw 工作目录不同则替换为实际路径）。
 5. **安全**：Cookie 仅本地；优先扫码，避免在不可信处粘贴 Cookie；可提醒 `zhihu logout` 清空。
-6. **升级**：`uv tool upgrade pyzhihu-cli` / `pipx upgrade pyzhihu-cli` / `pip install -U pyzhihu-cli`。
+6. **升级**：在 `oh-my-zhihu-cli` 仓库目录执行 `git pull && uv tool install --editable . --force`。
 
 ---
 

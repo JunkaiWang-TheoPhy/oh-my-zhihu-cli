@@ -1,4 +1,4 @@
-"""Regression tests for the private zhihu-cli extensions."""
+"""Regression tests for the zhihu-cli extensions."""
 
 from __future__ import annotations
 
@@ -42,8 +42,8 @@ def test_profile_paths_preserve_default_cookie_location():
 def test_markdown_snapshot_diff_uses_real_id():
     from zhihu_cli.commands.backup import _load_snapshot
 
-    before = Path("/tmp/zhihu-private-before.md")
-    after = Path("/tmp/zhihu-private-after.md")
+    before = Path("/tmp/zhihu-before.md")
+    after = Path("/tmp/zhihu-after.md")
     before.write_text("## 1. 旧标题\n\n- ID：1\n", encoding="utf-8")
     after.write_text("## 1. 新标题\n\n- ID：1\n", encoding="utf-8")
     try:

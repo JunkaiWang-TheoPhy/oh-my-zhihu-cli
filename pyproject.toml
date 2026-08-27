@@ -3,9 +3,9 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "pyzhihu-cli-private"
+name = "oh-my-zhihu-cli"
 version = "0.3.0"
-description = "Private AGPL-3.0 Zhihu CLI with read-only drafts, profiles, backups, and guarded writes"
+description = "AGPL-3.0 Zhihu CLI with read-only drafts, profiles, backups, and guarded writes"
 readme = "README.md"
 license = { text = "AGPL-3.0-only" }
 requires-python = ">=3.10"
@@ -32,8 +32,8 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/JunkaiWang-TheoPhy/zhihu-cli-private"
-Repository = "https://github.com/JunkaiWang-TheoPhy/zhihu-cli-private"
+Homepage = "https://github.com/JunkaiWang-TheoPhy/oh-my-zhihu-cli"
+Repository = "https://github.com/JunkaiWang-TheoPhy/oh-my-zhihu-cli"
 Upstream = "https://github.com/BAIGUANGMEI/zhihu-cli"
 
 [project.scripts]

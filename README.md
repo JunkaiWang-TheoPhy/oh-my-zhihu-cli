@@ -1,19 +1,21 @@
-# zhihu-cli-private
+# oh-my-zhihu-cli
 
 一个面向个人账号的知乎命令行工具，基于上游
 [BAIGUANGMEI/zhihu-cli](https://github.com/BAIGUANGMEI/zhihu-cli) 维护，加入了草稿读取、账号 profile、备份、diff、网络重试和写入保护。
+
+这是一个非官方的社区衍生项目。知乎接口可能变化，涉及发布、互动和删除的功能请谨慎使用。
 
 版本：`0.3.0`
 
 ## 安装
 
 ```bash
-git clone https://github.com/JunkaiWang-TheoPhy/zhihu-cli-private.git
-cd zhihu-cli-private
+git clone https://github.com/JunkaiWang-TheoPhy/oh-my-zhihu-cli.git
+cd oh-my-zhihu-cli
 uv tool install --editable .
 ```
 
-本地开发安装不会被 PyPI 上游升级覆盖。
+从本仓库安装不会被 PyPI 上游升级覆盖。
 
 ## 登录
 
