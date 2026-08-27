@@ -22,6 +22,7 @@
 - **收藏** — 查看收藏夹列表
 - **通知** — 查看通知消息
 - **JSON 输出** — 所有数据命令支持 `--json`
+- **安全执行** — 全局 `--readonly` / `--read-only` 阻止发布、互动和删除
 - **降低风控/反爬** — 全局统一 Chrome 浏览器指纹（`User-Agent` + `sec-ch-ua` + `sec-ch-ua-platform` 一致，版本号集中管理于 `config.CHROME_VERSION`）；登录与写操作带 CSRF（`_xsrf` / `x-xsrftoken`）。
 
 ## 命令一览
@@ -36,6 +37,7 @@
 | Interact   | vote, follow-question                    | 赞同回答、关注问题             |
 | Create     | ask, pin, article                        | 发布提问、发布想法、发布文章（图文混合，富文本支持）     |
 | Delete     | delete-question, delete-pin, delete-article | 删除自己的提问、想法、文章（需确认，可 -y 跳过） |
+| Safety     | --readonly, --read-only                  | 阻止发布、互动和删除，被拦截命令不发起请求 |
 | Other      | collections, notifications               | 收藏夹、通知                   |
 
 > 所有数据命令支持 `--json` 输出。
@@ -91,6 +93,20 @@ zhihu whoami --json
 
 # 退出登录
 zhihu logout
+```
+
+### 只读模式
+
+在命令前加 `--readonly`（或同义参数 `--read-only`），即可阻止所有发布、互动和删除命令。拦截发生在读取登录态和创建客户端之前，不会向知乎发起请求；登录、状态检查和查询命令仍可使用。
+
+```bash
+# 查询命令照常执行
+zhihu --readonly search "Python"
+zhihu --read-only question 12345678
+
+# 以下命令会被拦截，不会发布或删除
+zhihu --readonly pin "不会发布"
+zhihu --readonly delete-pin 12345678 -y
 ```
 
 ### 搜索
@@ -259,6 +275,7 @@ zhihu_cli/
 ## 注意事项
 
 - Cookie 存储在 `~/.zhihu-cli/cookies.json`，权限 `0600`
+- 需要检查或浏览时可使用全局 `--readonly` / `--read-only`，避免误触发布、互动或删除
 - `zhihu status` 只检查本地已保存的 cookie，不发起网络请求
 - `zhihu login --cookie` 要求 Cookie 至少包含 `z_c0`、`_xsrf`、`d_c0`
 - 用户查询使用 URL Token（即知乎个人主页的路径部分，如 `zhihu.com/people/xxx` 中的 `xxx`）

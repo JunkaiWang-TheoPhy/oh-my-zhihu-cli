@@ -1,6 +1,6 @@
 ---
 name: zhihu-cli
-description: "知乎 CLI (pyzhihu-cli)：搜索、热榜、问题/回答/评论、推荐 Feed、用户资料、发想法/提问/文章、删自己的内容、点赞关注、收藏与通知。Agent 代执行 zhihu 命令，Cookie 仅存本地。"
+description: "知乎 CLI (pyzhihu-cli)：搜索、热榜、问题/回答/评论、推荐 Feed、用户资料、发想法/提问/文章、删自己的内容、点赞关注、收藏与通知，并提供全局只读保护。Agent 代执行 zhihu 命令，Cookie 仅存本地。"
 author: BAIGUANGMEI
 version: "0.2.6"
 tags:
@@ -52,8 +52,9 @@ tags:
 2. **数据查询优先用 --json**：凡执行**数据查询类**指令（如 `search`、`hot`、`question`、`answers`、`answer`、`user`、`user-answers`、`user-articles`、`followers`、`following`、`feed`、`topic`、`collections`、`notifications`、`whoami` 等），**必须**带 `--json`，以获取 API 返回的完整数据，便于解析、汇总或向用户展示；不得仅依赖终端表格等非结构化输出。例外：`feeds` 当前不支持 `--json`；需要展示回答评论时使用 `answer --comments`（`--json` 只输出回答详情，不输出评论）。
 3. **需登录时**：先 `zhihu status`；未登录则 `zhihu login --qrcode` 或引导用户 `zhihu login --cookie "..."`。
 4. **扫码登录**：执行 `zhihu login --qrcode` 后，若本轮未发过二维码且用户已配置 OpenClaw → 先将二维码复制到 OpenClaw 工作目录的 `media` 文件夹，再 `openclaw message send --channel <渠道> --target <目标> --media <media 路径>/login_qrcode.png --message "请用知乎 App 扫码并确认登录"`；**保持登录进程不中断**直到成功/失败/超时；用户说「重新登录/换号」则中断当前进程再重新执行登录。**复制步骤**：Linux/macOS：`mkdir -p ~/.openclaw/workspace/media && cp ~/.zhihu-cli/login_qrcode.png ~/.openclaw/workspace/media/`；Windows：`mkdir "%USERPROFILE%\.openclaw\workspace\media" 2>nul & copy "%USERPROFILE%\.zhihu-cli\login_qrcode.png" "%USERPROFILE%\.openclaw\workspace\media\login_qrcode.png"`（若 OpenClaw 工作目录不同则替换为实际路径）。
-5. **安全**：Cookie 仅本地；优先扫码，避免在不可信处粘贴 Cookie；可提醒 `zhihu logout` 清空。
-6. **升级**：`uv tool upgrade pyzhihu-cli` / `pipx upgrade pyzhihu-cli` / `pip install -U pyzhihu-cli`。
+5. **只读优先**：用户只要求查询、检查或预览时，在子命令前加全局 `--readonly`（同义参数 `--read-only`），阻止发布、互动和删除；该拦截发生在读取登录态和创建客户端之前，不会向知乎发请求。
+6. **安全**：Cookie 仅本地；优先扫码，避免在不可信处粘贴 Cookie；可提醒 `zhihu logout` 清空。
+7. **升级**：`uv tool upgrade pyzhihu-cli` / `pipx upgrade pyzhihu-cli` / `pip install -U pyzhihu-cli`。
 
 ---
 
@@ -77,6 +78,7 @@ tags:
 | 发想法 | `zhihu pin "标题" [-c "正文"] [-i 图 ...]` |
 | 发文章 | `zhihu article "标题" "正文" [-t 话题id ...] [-i 图 ...]` |
 | 删提问/想法/文章 | `zhihu delete-question <id>` / `delete-pin <id>` / `delete-article <id>` [-y] |
+| 只读保护 | `zhihu --readonly <子命令>` 或 `zhihu --read-only <子命令>` |
 | 收藏 / 通知 | `zhihu collections [--limit N] [--json]`；`zhihu notifications [--limit N] [--offset M] [--json]` |
 | 退出 | `zhihu logout` |
 | 版本 / 升级 | `zhihu --version`；升级见上规则 6 |
@@ -91,6 +93,7 @@ tags:
   → 否则：查上表得命令
     → 若该命令需登录：zhihu status → 未登录则 zhihu login --qrcode 或 --cookie
       → 若扫码且未发过图：复制到 media → openclaw message send --media ... → 保持进程
+    → 若仅查询/检查：在子命令前加 --readonly，阻止发布、互动和删除
     → 执行 zhihu <子命令>（数据查询类必须带 --json；feeds 和 answer --comments 除外）
     → 整理结果或报错提示
 ```

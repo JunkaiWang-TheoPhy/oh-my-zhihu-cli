@@ -36,9 +36,16 @@ def _setup_logging(verbose: bool):
 @click.group()
 @click.version_option(version=__version__, prog_name="zhihu-cli")
 @click.option("-v", "--verbose", is_flag=True, help="Enable debug logging")
-def cli(verbose: bool):
+@click.option(
+    "--readonly",
+    "--read-only",
+    is_flag=True,
+    help="Block commands that write, interact, or delete on Zhihu",
+)
+def cli(verbose: bool, readonly: bool):
     """zhihu-cli — Zhihu from your terminal."""
     _setup_logging(verbose)
+    click.get_current_context().ensure_object(dict)["readonly"] = readonly
 
 
 # Auth

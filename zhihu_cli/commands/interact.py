@@ -35,12 +35,23 @@ def _get_client():
         yield client
 
 
+def _ensure_writable(action: str) -> None:
+    """Reject remote mutations when the root command requested read-only mode."""
+    context = click.get_current_context(silent=True)
+    root_options = context.find_root().obj if context else None
+    if root_options and root_options.get("readonly"):
+        raise click.UsageError(
+            f"read-only mode blocks {action}; no request was sent",
+        )
+
+
 @click.command()
 @click.argument("answer_id", type=int)
 @click.option("--up", "action", flag_value="up", default=True, help="Upvote (default)")
 @click.option("--neutral", "action", flag_value="neutral", help="Cancel vote")
 def vote(answer_id: int, action: str):
     """Vote on an answer."""
+    _ensure_writable("voting")
     with _get_client() as client:
         try:
             if action == "up":
@@ -59,6 +70,7 @@ def vote(answer_id: int, action: str):
 @click.option("--unfollow", is_flag=True, help="Unfollow instead")
 def follow_question(question_id: int, unfollow: bool):
     """Follow or unfollow a question."""
+    _ensure_writable("following questions")
     with _get_client() as client:
         try:
             if unfollow:
@@ -181,6 +193,7 @@ def notifications(limit: int, offset: int, as_json: bool):
 @click.option("-i", "--image", "images", multiple=True, help="Image file path (repeatable)")
 def ask(title: str, detail: str, topics: tuple[str, ...], images: tuple[str, ...]):
     """Post a new question (发布提问)."""
+    _ensure_writable("posting a question")
     if not title.strip():
         print_error("Title cannot be empty")
         sys.exit(1)
@@ -220,6 +233,7 @@ def ask(title: str, detail: str, topics: tuple[str, ...], images: tuple[str, ...
 @click.option("-i", "--image", "images", multiple=True, help="Image file path (repeatable)")
 def pin(title: str, content: str, images: tuple[str, ...]):
     """Write a new pin / thought (发布想法). Title and content, payload similar to question."""
+    _ensure_writable("publishing a pin")
     if not title.strip():
         print_error("Title cannot be empty")
         sys.exit(1)
@@ -259,6 +273,7 @@ def pin(title: str, content: str, images: tuple[str, ...]):
 @click.option("-i", "--image", "images", multiple=True, help="Image file path (repeatable)")
 def article(title: str, content: str, topics: tuple[str, ...], images: tuple[str, ...]):
     """Publish a new article (发布文章)."""
+    _ensure_writable("publishing an article")
     if not title.strip():
         print_error("Title cannot be empty")
         sys.exit(1)
@@ -301,6 +316,7 @@ def article(title: str, content: str, topics: tuple[str, ...], images: tuple[str
 @click.option("-y", "--yes", "skip_confirm", is_flag=True, help="Skip confirmation")
 def delete_question(question_id: str, skip_confirm: bool):
     """Delete your own question (删除自己发布的提问)."""
+    _ensure_writable("deleting a question")
     if not skip_confirm:
         click.confirm(f"Delete question {question_id}? This cannot be undone.", abort=True)
     with _get_client() as client:
@@ -321,6 +337,7 @@ def delete_question(question_id: str, skip_confirm: bool):
 @click.option("-y", "--yes", "skip_confirm", is_flag=True, help="Skip confirmation")
 def delete_pin(pin_id: str, skip_confirm: bool):
     """Delete your own pin / thought (删除自己发布的想法)."""
+    _ensure_writable("deleting a pin")
     if not skip_confirm:
         click.confirm(f"Delete pin {pin_id}? This cannot be undone.", abort=True)
     with _get_client() as client:
@@ -341,6 +358,7 @@ def delete_pin(pin_id: str, skip_confirm: bool):
 @click.option("-y", "--yes", "skip_confirm", is_flag=True, help="Skip confirmation")
 def delete_article_cmd(article_id: str, skip_confirm: bool):
     """Delete your own article (删除自己发布的文章)."""
+    _ensure_writable("deleting an article")
     if not skip_confirm:
         click.confirm(f"Delete article {article_id}? This cannot be undone.", abort=True)
     with _get_client() as client:
