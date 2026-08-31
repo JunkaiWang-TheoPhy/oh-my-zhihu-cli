@@ -34,6 +34,12 @@ def _make_mock_client(**method_returns):
 
 
 class TestCliGroup:
+    def test_no_command_shows_branded_home(self, runner):
+        with patch("zhihu_cli.cli.print_banner") as print_banner:
+            result = runner.invoke(cli, [])
+        assert result.exit_code == 0
+        print_banner.assert_called_once()
+
     def test_help(self, runner):
         result = runner.invoke(cli, ["--help"])
         assert result.exit_code == 0
@@ -49,7 +55,7 @@ class TestCliGroup:
     def test_all_commands_registered(self, runner):
         result = runner.invoke(cli, ["--help"])
         expected = [
-            "login", "logout", "status", "whoami",
+            "login", "logout", "status", "whoami", "api",
             "search", "hot", "question", "answer", "answers",
             "feed", "topic",
             "user", "user-answers", "user-articles",
@@ -104,6 +110,7 @@ class TestLoginCommand:
         assert result.exit_code == 0
         assert "--qrcode" in result.output
         assert "--cookie" in result.output
+        assert "--api" in result.output
 
 
 class TestWhoamiCommand:
@@ -134,8 +141,12 @@ class TestWhoamiCommand:
 
 class TestSearchCommand:
     def test_search_not_authenticated(self, runner, tmp_config_dir):
-        result = runner.invoke(cli, ["search", "Python"])
+        with patch("zhihu_cli.routing.session_configured", return_value=False), patch(
+            "zhihu_cli.routing.api_configured", return_value=False
+        ):
+            result = runner.invoke(cli, ["search", "Python"])
         assert result.exit_code == 1
+        assert "首次配置" in result.output
 
     def test_search_displays_results(self, runner, saved_cookies, mock_search_result):
         mc = _make_mock_client(search=mock_search_result)

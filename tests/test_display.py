@@ -2,9 +2,6 @@
 
 from __future__ import annotations
 
-from io import StringIO
-
-from rich.console import Console
 from rich.table import Table
 
 from zhihu_cli.display import (
@@ -16,6 +13,39 @@ from zhihu_cli.display import (
     strip_html,
     truncate,
 )
+
+
+def test_print_banner_contains_brand_and_quick_actions(capsys):
+    from zhihu_cli.display import print_banner
+
+    print_banner()
+    output = capsys.readouterr().out
+    assert "知乎 CLI" in output
+    assert "feed" in output
+    assert "pin" in output
+    assert "█" in output
+    assert "工作台" in output
+    assert "浏览" in output
+    assert "写作" in output
+
+
+def test_pixel_fox_is_a_colored_renderable():
+    from rich.text import Text
+
+    from zhihu_cli.display import render_pixel_fox
+
+    fox = render_pixel_fox()
+    assert isinstance(fox, Text)
+    assert "█" in fox.plain
+    assert len(fox.spans) > 0
+
+
+def test_embedded_brand_sprites_are_available():
+    from zhihu_cli.display import ASSET_DIR, render_sprite
+
+    for name in ("logo_01", "logo_02", "logo_03", "liukanshan_01", "liukanshan_02", "liukanshan_03"):
+        assert (ASSET_DIR / f"{name}.png").is_file()
+        assert render_sprite(name, width=8).plain
 
 
 # ── strip_html ─────────────────────────────────────────────────────────────────

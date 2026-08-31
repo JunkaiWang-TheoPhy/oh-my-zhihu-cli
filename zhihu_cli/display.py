@@ -8,9 +8,13 @@ from __future__ import annotations
 
 import re
 from html import unescape
+from pathlib import Path
 
+from PIL import Image
+from rich import box
 from rich.console import Console
 from rich.panel import Panel
+from rich.style import Style
 from rich.table import Table
 from rich.text import Text
 from rich.theme import Theme
@@ -32,22 +36,132 @@ ZHIHU_THEME = Theme({
 })
 
 console = Console(theme=ZHIHU_THEME)
+ASSET_DIR = Path(__file__).with_name("assets")
 
 # ── Brand ──────────────────────────────────────────────────────────────────────
 
-BRAND = "[bold blue]zhihu[/bold blue][bold white]-cli[/bold white]"
+BRAND = "[bold #0084ff]知[/bold #0084ff][bold white]乎[/bold white] [dim]CLI[/dim]"
 SEPARATOR = "[dim]─" * 50 + "[/dim]"
+
+PIXEL_FOX = (
+    "...B....B...",
+    "..BBB..BBB..",
+    ".BBBBBBBBBB.",
+    "BBWWWWWWWWBB",
+    "BWWDWWDWWWWB",
+    "BWWWWWWWWWWB",
+    "BWWWWWYWWWWB",
+    ".BWWWWWWWWB.",
+    "..BBBBBBBB..",
+    "...BB..BB...",
+)
+
+
+def render_sprite(name: str, *, width: int = 18) -> Text:
+    """Render an embedded PNG sprite with terminal half-block cells."""
+    path = ASSET_DIR / f"{name}.png"
+    if not path.is_file():
+        raise FileNotFoundError(path)
+    image = Image.open(path).convert("RGBA")
+    height = max(1, round(image.height * width / image.width / 2))
+    image = image.resize((width, height * 2), Image.Resampling.NEAREST)
+    text = Text()
+    for y in range(0, image.height, 2):
+        if y:
+            text.append("\n")
+        for x in range(image.width):
+            top = image.getpixel((x, y))
+            bottom = image.getpixel((x, min(y + 1, image.height - 1)))
+            top_color = _pixel_color(top)
+            bottom_color = _pixel_color(bottom)
+            if top_color is None and bottom_color is None:
+                text.append("  ")
+            elif top_color is None:
+                text.append("▄", style=Style(color=bottom_color))
+            elif bottom_color is None:
+                text.append("▀", style=Style(color=top_color))
+            else:
+                text.append("▀", style=Style(color=top_color, bgcolor=bottom_color))
+    return text
+
+
+def _pixel_color(pixel: tuple[int, int, int, int]) -> str | None:
+    red, green, blue, alpha = pixel
+    if alpha < 24:
+        return None
+    return f"#{red:02x}{green:02x}{blue:02x}"
+
+
+def render_pixel_fox() -> Text:
+    """Return a stable pixel-art Liu Kan-shan face independent of terminal image support."""
+    colors = {"B": "#0084ff", "W": "#f5f7fa", "D": "#172b4d", "Y": "#ffcc66"}
+    text = Text()
+    for row_index, row in enumerate(PIXEL_FOX):
+        if row_index:
+            text.append("\n")
+        for pixel in row:
+            if pixel == ".":
+                text.append("  ")
+            else:
+                text.append("█", style=colors[pixel])
+    return text
 
 
 def print_banner():
-    """Print a branded banner."""
+    """Print a compact, local-only Zhihu workbench."""
     ver = _get_version()
+    from .config import COOKIE_FILE
+    from .official import get_official_cli_path
+    from .routing import load_settings
+
+    settings = load_settings()
+    session_state = "已配置" if COOKIE_FILE.exists() else "未配置"
+    api_state = "已安装" if get_official_cli_path().is_file() else "未安装"
+
+    status = Table.grid(padding=(0, 1))
+    status.add_column(style="bold #0084ff", width=12)
+    status.add_column(style="white")
+    status.add_row("SESSION", session_state)
+    status.add_row("OFFICIAL API", api_state)
+    status.add_row("优先后端", settings["priority"])
+    status.add_row("语言", settings["language"])
+
+    sections = Table.grid(padding=(0, 2))
+    sections.add_column(style="bold white", width=8)
+    sections.add_column(style="dim white")
+    sections.add_row("浏览", "feed · hot · search · question")
+    sections.add_row("阅读", "answer · answers · user · collections")
+    sections.add_row("写作", "pin · article · ask · drafts")
+    sections.add_row("设置", "config show · login · status")
+
+    right = Table.grid(padding=(0, 0))
+    right.add_row(Text.from_markup(f"{BRAND}  [dim]v{ver}[/dim]"))
+    right.add_row(Text("知乎终端工作台", style="white"))
+    right.add_row(Text(""))
+    right.add_row(status)
+    left = Table.grid(padding=(0, 0))
+    left.add_row(Text("知乎", style="bold #0084ff"))
+    left.add_row(Text("知乎蓝 · terminal", style="dim"))
+    left.add_row(Text(""))
+    left.add_row(render_pixel_fox())
+
+    top = Table.grid(padding=(0, 3))
+    top.add_column(width=18)
+    top.add_column()
+    top.add_row(left, right)
+
+    layout = Table.grid(padding=(0, 0))
+    layout.add_row(top)
+    layout.add_row(Text(""))
+    layout.add_row(sections)
     console.print(
         Panel(
-            f"{BRAND}  [dim]v{ver}[/dim]\n"
-            "[dim]知乎命令行工具 — Search, Read, Interact[/dim]",
-            border_style="blue",
-            padding=(0, 2),
+            layout,
+            border_style="#0084ff",
+            box=box.DOUBLE,
+            padding=(1, 2),
+            title="[bold #0084ff]知乎 · 工作台[/bold #0084ff]",
+            subtitle="[dim]Search · Read · Write · Manage[/dim]",
         ),
         highlight=False,
     )
@@ -126,7 +240,7 @@ def make_table(title: str, *, show_lines: bool = False, pad_edge: bool = False) 
     return Table(
         title=f"[title]{title}[/title]",
         title_style="",
-        border_style="blue",
+        border_style="#0084ff",
         header_style="bold cyan",
         show_lines=show_lines,
         pad_edge=pad_edge,
@@ -139,7 +253,7 @@ def make_kv_table(title: str) -> Table:
     table = Table(
         title=f"[title]{title}[/title]",
         title_style="",
-        border_style="blue",
+        border_style="#0084ff",
         show_header=False,
         pad_edge=False,
         expand=False,

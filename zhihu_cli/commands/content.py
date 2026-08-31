@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import json
+import shutil
+import subprocess
 import sys
 from contextlib import contextmanager
+from pathlib import Path
 
 import click
 
@@ -17,8 +20,11 @@ from ..display import (
     print_error,
     print_hint,
     print_info,
+    print_success,
     strip_html,
 )
+from ..official import OfficialCliError, run_official
+from ..routing import BackendUnavailable, choose_backend, first_run_guidance, load_settings
 
 
 @contextmanager
@@ -34,6 +40,25 @@ def _get_client():
         yield client
 
 
+def _run_official_content(args: list[str]) -> None:
+    """Forward an overlapping read command to the official CLI."""
+    click.echo(
+        "Backend: Official API · this command uses the official API scope",
+        err=True,
+    )
+    try:
+        result = run_official(args, timeout=60)
+    except OfficialCliError as exc:
+        print_error(str(exc))
+        raise click.exceptions.Exit(1) from exc
+    if result.stdout:
+        click.echo(result.stdout, nl=False)
+    if result.stderr:
+        click.echo(result.stderr, nl=False, err=True)
+    if result.returncode:
+        raise click.exceptions.Exit(result.returncode)
+
+
 @click.command()
 @click.argument("query")
 @click.option("-t", "--type", "search_type", default="general",
@@ -42,8 +67,36 @@ def _get_client():
 @click.option("-l", "--limit", default=10, help="Max results", show_default=True)
 @click.option("-a", "--answers", default=3, help="Answers per question (0=hide)", show_default=True)
 @click.option("--json", "as_json", is_flag=True, help="Output raw JSON")
-def search(query: str, search_type: str, limit: int, answers: int, as_json: bool):
+@click.option("--session", "force_session", is_flag=True, help="Force the Web Session backend")
+@click.option("--api", "force_api", is_flag=True, help="Force the Official API backend")
+@click.pass_context
+def search(
+    ctx: click.Context,
+    query: str,
+    search_type: str,
+    limit: int,
+    answers: int,
+    as_json: bool,
+    force_session: bool,
+    force_api: bool,
+):
     """Search Zhihu content."""
+    try:
+        backend = choose_backend(
+            "session" if force_session else "api" if force_api else (ctx.find_root().obj or {}).get("backend"),
+            load_settings(),
+        )
+    except BackendUnavailable as exc:
+        print_error(str(exc))
+        click.echo(first_run_guidance(load_settings()["language"]), err=True)
+        raise click.exceptions.Exit(1) from exc
+    if backend.value == "api":
+        if search_type != "general":
+            print_error("Official API search supports Zhihu/general search only")
+            raise click.exceptions.Exit(2)
+        _run_official_content(["search", "zhihu", "--query", query, "--count", str(limit)])
+        return
+
     with _get_client() as client:
         try:
             results = client.search(query, search_type=search_type, limit=limit)
@@ -102,11 +155,87 @@ def search(query: str, search_type: str, limit: int, answers: int, as_json: bool
 
 
 @click.command()
+@click.option("-l", "--limit", default=20, help="Maximum number of drafts", show_default=True)
+@click.option("--json", "as_json", is_flag=True, help="Output raw JSON")
+@click.option(
+    "--open",
+    "open_index",
+    type=click.IntRange(min=1),
+    help="Open a selected draft as a local Markdown file in the system app",
+)
+def drafts(limit: int, as_json: bool, open_index: int | None):
+    """List draft titles (read-only; editing stays in an external app)."""
+    from .interact import _get_client
+
+    with _get_client() as client:
+        try:
+            result = client.get_drafts(limit=limit)
+        except Exception as exc:
+            print_error(f"Failed to fetch drafts: {exc}")
+            raise click.exceptions.Exit(1) from exc
+
+    if as_json:
+        click.echo(json.dumps(result, indent=2, ensure_ascii=False))
+        return
+    data = result.get("data", []) if isinstance(result, dict) else []
+    if not data:
+        print_info("No drafts found")
+        return
+    if open_index is not None:
+        if open_index > len(data):
+            raise click.ClickException(f"Draft selection out of range: {open_index}")
+        draft = data[open_index - 1] if isinstance(data[open_index - 1], dict) else {}
+        title = str(draft.get("title") or draft.get("name") or "untitled")
+        body = draft.get("content") or draft.get("body") or draft.get("description") or ""
+        markdown_dir = Path.home() / ".zhihu-cli" / "drafts"
+        markdown_dir.mkdir(parents=True, exist_ok=True)
+        draft_id = str(draft.get("id") or open_index)
+        markdown_path = markdown_dir / f"{draft_id}.md"
+        markdown_path.write_text(f"# {title}\n\n{strip_html(str(body))}\n", encoding="utf-8")
+        opener = shutil.which("open") or shutil.which("xdg-open")
+        if not opener:
+            print_info(f"Markdown draft saved to {markdown_path}")
+            return
+        subprocess.Popen([opener, str(markdown_path)])
+        print_success(f"Opened draft in Markdown app: {markdown_path}")
+        return
+    table = make_table(" Drafts · title only ")
+    table.add_column("#", width=4, style="dim")
+    table.add_column("Title", ratio=1)
+    table.add_column("Type", width=10)
+    for index, item in enumerate(data, 1):
+        item = item if isinstance(item, dict) else {}
+        table.add_row(
+            str(index),
+            str(item.get("title") or item.get("name") or "（无标题）"),
+            str(item.get("type") or item.get("action") or "draft"),
+        )
+    console.print(table)
+    print_hint("草稿列表只显示标题；使用 zhihu drafts --open N 在 Markdown 应用中打开本地副本。")
+
+
+@click.command()
 @click.option("-l", "--limit", default=50, help="Number of hot questions", show_default=True)
 @click.option("-a", "--answers", default=3, help="Answers per question (0=hide)", show_default=True)
 @click.option("--json", "as_json", is_flag=True, help="Output raw JSON")
-def hot(limit: int, answers: int, as_json: bool):
+@click.option("--session", "force_session", is_flag=True, help="Force the Web Session backend")
+@click.option("--api", "force_api", is_flag=True, help="Force the Official API backend")
+@click.pass_context
+def hot(ctx: click.Context, limit: int, answers: int, as_json: bool, force_session: bool, force_api: bool):
     """Show trending questions (热榜)."""
+    try:
+        backend = choose_backend(
+            "session" if force_session else "api" if force_api else (ctx.find_root().obj or {}).get("backend"),
+            load_settings(),
+        )
+    except BackendUnavailable as exc:
+        print_error(str(exc))
+        click.echo(first_run_guidance(load_settings()["language"]), err=True)
+        raise click.exceptions.Exit(1) from exc
+    if backend.value == "api":
+        _run_official_content(["hot", "--limit", str(limit)])
+        return
+
     with _get_client() as client:
         try:
             results = client.get_hot_list(limit=limit)

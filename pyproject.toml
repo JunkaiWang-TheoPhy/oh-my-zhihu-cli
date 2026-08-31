@@ -37,6 +37,8 @@ Repository = "https://github.com/BAIGUANGMEI/zhihu-cli"
 
 [project.scripts]
 zhihu = "zhihu_cli.cli:cli"
+zhihu-tui = "zhihu_cli.cli:tui_entry"
+zhihu-api = "zhihu_cli.commands.official:api"
 
 [dependency-groups]
 dev = [

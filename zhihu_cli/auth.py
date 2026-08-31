@@ -15,39 +15,39 @@ from __future__ import annotations
 import json
 import logging
 import time
-from pathlib import Path
 
 import requests
 
+from .accounts import AccountStore, context_account_name
 from .config import (
     CONFIG_DIR,
     COOKIE_FILE,
     DEFAULT_TIMEOUT,
-    get_browser_headers,
     QRCODE_IMAGE_PATH,
     REQUIRED_COOKIES,
     ZHIHU_BASE_URL,
     ZHIHU_LOGIN_URL,
     ZHIHU_OAUTH_CAPTCHA,
     ZHIHU_QRCODE_API,
+    get_browser_headers,
 )
-from .display import console, print_error, print_hint, print_info, print_success, print_warning
+from .display import console, print_hint, print_info
 from .exceptions import LoginError
 
 logger = logging.getLogger(__name__)
 
 
-def get_saved_cookie_string() -> str | None:
+def get_saved_cookie_string(account_name: str | None = None) -> str | None:
     """Load only saved cookies from local config file.
 
     This helper never triggers browser extraction and has no write side effects.
     """
-    return _load_saved_cookies()
+    return _load_saved_cookies(account_name)
 
 
-def get_cookie_string() -> str | None:
+def get_cookie_string(account_name: str | None = None) -> str | None:
     """Try loading saved cookies. Returns cookie string or None."""
-    cookie = _load_saved_cookies()
+    cookie = _load_saved_cookies(account_name)
     if cookie:
         logger.info("Loaded saved cookies from %s", COOKIE_FILE)
         return cookie
@@ -55,7 +55,7 @@ def get_cookie_string() -> str | None:
 
 
 def _fetch_missing_cookies(cookie_dict: dict) -> dict:
-    """Request Zhihu homepage to obtain _xsrf and d_c0; return cookie_dict merged with received cookies."""
+    """Fetch missing _xsrf and d_c0 values and merge them into the cookies."""
     if "z_c0" not in cookie_dict:
         return cookie_dict
     session = requests.Session()
@@ -74,8 +74,27 @@ def _fetch_missing_cookies(cookie_dict: dict) -> dict:
     return out
 
 
-def _load_saved_cookies() -> str | None:
-    """Load cookies from saved file. If _xsrf or d_c0 are missing but z_c0 exists, fetch them from Zhihu and save."""
+def _load_saved_cookies(account_name: str | None = None) -> str | None:
+    """Load cookies, fetching missing browser cookies when a token is present."""
+    store = AccountStore(CONFIG_DIR)
+    account_name = account_name or context_account_name()
+    stored = store.session_cookies(account_name) if account_name else store.active_session_cookies()
+    if stored:
+        if _has_required_cookies(stored):
+            return _dict_to_cookie_str(stored)
+        if "z_c0" in stored and (REQUIRED_COOKIES - stored.keys()):
+            merged = _fetch_missing_cookies(stored)
+            if _has_required_cookies(merged):
+                save_cookies(
+                    _dict_to_cookie_str(merged),
+                    account_name=account_name or store.active_name("session"),
+                )
+                return _dict_to_cookie_str(merged)
+        return None
+
+    if account_name:
+        return None
+
     if not COOKIE_FILE.exists():
         return None
 
@@ -269,7 +288,6 @@ def _qrcode_login_api() -> str:
         raise LoginError("二维码登录超时或未完成确认（未获取到 z_c0）")
 
     cookie_str = _dict_to_cookie_str(cookie_dict)
-    save_cookies(cookie_str)
     return cookie_str
 
 
@@ -311,7 +329,10 @@ def _save_qrcode_image(qr_text: str) -> None:
         CONFIG_DIR.mkdir(parents=True, exist_ok=True)
         img = qrcode.make(qr_text)
         img.save(QRCODE_IMAGE_PATH)
-        print_hint(f"二维码已保存至: [bold]{QRCODE_IMAGE_PATH}[/bold]（AI Agent 可读取并发送给用户扫码）")
+        print_hint(
+            f"二维码已保存至: [bold]{QRCODE_IMAGE_PATH}[/bold]"
+            "（AI Agent 可读取并发送给用户扫码）"
+        )
     except Exception as e:
         logger.debug("Failed to save QR code image: %s", e)
 
@@ -333,27 +354,28 @@ def _display_qr_text_in_terminal(qr_text: str) -> bool:
         return False
 
 
-def save_cookies(cookie_str: str):
+def save_cookies(cookie_str: str, *, account_name: str | None = None):
     """Save cookies to config file."""
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
 
     cookies = cookie_str_to_dict(cookie_str)
-    data = {"cookies": cookies}
-
-    COOKIE_FILE.write_text(
-        json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8"
-    )
-    try:
-        COOKIE_FILE.chmod(0o600)
-    except OSError:
-        logger.debug("Failed to set permissions on %s", COOKIE_FILE)
-    logger.info("Cookies saved to %s", COOKIE_FILE)
+    store = AccountStore(CONFIG_DIR)
+    name = account_name or store.active_name("session") or "default"
+    store.save_session(name, cookies)
+    logger.info("Cookies saved for account %s", name)
 
 
-def clear_cookies():
+def clear_cookies(*, account_name: str | None = None, all_accounts: bool = False):
     """Remove saved cookies (for logout)."""
+    store = AccountStore(CONFIG_DIR)
     removed = []
-    if COOKIE_FILE.exists():
+    names = [item.name for item in store.list("session")]
+    targets = names if all_accounts else [account_name or store.active_name("session")]
+    for name in targets:
+        if name and name in [item.name for item in store.list("session")]:
+            store.remove(name, "session")
+            removed.append(name)
+    if not removed and COOKIE_FILE.exists():
         COOKIE_FILE.unlink()
         removed.append(COOKIE_FILE.name)
     if removed:

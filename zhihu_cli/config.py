@@ -7,6 +7,7 @@ from pathlib import Path
 # Application directories
 CONFIG_DIR = Path.home() / ".zhihu-cli"
 COOKIE_FILE = CONFIG_DIR / "cookies.json"
+CONFIG_FILE = CONFIG_DIR / "settings.json"
 # QR code image path for AI Agent (e.g. OpenClaw) to send to user for scan login
 QRCODE_IMAGE_PATH = CONFIG_DIR / "login_qrcode.png"
 

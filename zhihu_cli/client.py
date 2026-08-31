@@ -22,13 +22,13 @@ from PIL import Image
 
 from .config import (
     DEFAULT_TIMEOUT,
-    get_browser_headers,
     ZHIHU_API_V4,
     ZHIHU_CONTENT_DRAFTS_URL,
     ZHIHU_CONTENT_PUBLISH_URL,
     ZHIHU_IMAGE_API,
     ZHIHU_OSS_UPLOAD_URL,
     ZHIHU_ZHUANLAN_API,
+    get_browser_headers,
 )
 from .exceptions import DataFetchError, LoginError
 
@@ -93,6 +93,13 @@ class ZhihuClient:
         if not isinstance(result, dict):
             return {}
         return result
+
+    def get_drafts(self, offset: int = 0, limit: int = 20) -> dict:
+        """List the current user's content drafts without changing them."""
+        return self._get(
+            ZHIHU_CONTENT_DRAFTS_URL,
+            params={"offset": offset, "limit": limit},
+        )
 
     # ===== Search =====
 
