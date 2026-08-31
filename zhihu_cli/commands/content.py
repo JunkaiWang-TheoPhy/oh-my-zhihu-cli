@@ -1,15 +1,16 @@
-"""Content browsing commands: search, hot, question, answer, feed, topic."""
+"""Content browsing commands: search, hot, question, answer, feed, topic, drafts."""
 
 from __future__ import annotations
 
 import json
-import shutil
-import subprocess
+import re
 import sys
 from contextlib import contextmanager
+from datetime import datetime
 from pathlib import Path
 
 import click
+from rich.text import Text
 
 from ..auth import cookie_str_to_dict, get_cookie_string
 from ..display import (
@@ -22,6 +23,7 @@ from ..display import (
     print_info,
     print_success,
     strip_html,
+    truncate,
 )
 from ..official import OfficialCliError, run_official
 from ..routing import BackendUnavailable, choose_backend, first_run_guidance, load_settings
@@ -40,23 +42,439 @@ def _get_client():
         yield client
 
 
-def _run_official_content(args: list[str]) -> None:
-    """Forward an overlapping read command to the official CLI."""
-    click.echo(
-        "Backend: Official API · this command uses the official API scope",
-        err=True,
-    )
+def _draft_title_and_body(item: dict) -> tuple[str, str]:
+    """Extract display text from a pin draft's rich-content payload."""
+    result = item.get("result") or {}
+    parts = result.get("content") or []
+    title = ""
+    body_parts = []
+
+    for part in parts:
+        if not isinstance(part, dict):
+            continue
+        if not title and isinstance(part.get("title"), str):
+            title = strip_html(part["title"])
+        for field in ("content", "own_text"):
+            value = part.get(field)
+            if isinstance(value, str) and value.strip():
+                text = strip_html(value)
+                if text and text != title and text not in body_parts:
+                    body_parts.append(text)
+                break
+
+    return title or "（无标题）", " ".join(body_parts)
+
+
+def _format_draft_time(value) -> str:
+    """Format a Zhihu timestamp for terminal output."""
     try:
-        result = run_official(args, timeout=60)
-    except OfficialCliError as exc:
-        print_error(str(exc))
-        raise click.exceptions.Exit(1) from exc
-    if result.stdout:
-        click.echo(result.stdout, nl=False)
-    if result.stderr:
-        click.echo(result.stderr, nl=False, err=True)
-    if result.returncode:
-        raise click.exceptions.Exit(result.returncode)
+        timestamp = float(value)
+        if timestamp > 10_000_000_000:
+            timestamp /= 1000
+        return datetime.fromtimestamp(timestamp).strftime("%Y-%m-%d %H:%M")
+    except (TypeError, ValueError, OSError, OverflowError):
+        return "—"
+
+
+def _article_plain_text(content: str) -> str:
+    """Convert article HTML into readable terminal text."""
+    if not content:
+        return ""
+    content = re.sub(
+        r"<(?:br\s*/?|/(?:p|div|li|h[1-6]|blockquote))\s*>",
+        "\n",
+        content,
+        flags=re.IGNORECASE,
+    )
+    return strip_html(content)
+
+
+def _merge_paged_result(last_result: dict, items: list, total) -> dict:
+    """Build a JSON response containing all fetched pages."""
+    output = dict(last_result)
+    output["data"] = items
+    output["paging"] = dict(output.get("paging") or {})
+    output["paging"].update({
+        "is_start": True,
+        "is_end": True,
+        "next": None,
+        "totals": total if total is not None else len(items),
+    })
+    return output
+
+
+def _fetch_draft_pages(fetch_page, limit: int, fetch_all: bool):
+    """Fetch one page or all pages from a draft list endpoint."""
+    offset = 0
+    all_items = []
+    last_result = {}
+    total = None
+
+    while True:
+        result = fetch_page(offset=offset, limit=limit)
+        page = result.get("data") or []
+        if not isinstance(page, list):
+            raise ValueError("Draft list returned invalid data")
+        all_items.extend(page)
+        last_result = result
+
+        paging = result.get("paging") or {}
+        total = paging.get("totals", total)
+        if not fetch_all or paging.get("is_end", True) or not page:
+            break
+
+        next_offset = offset + len(page)
+        if next_offset <= offset:
+            break
+        offset = next_offset
+
+    return all_items, last_result, total
+
+
+def _draft_search_text(draft_type: str, item: dict) -> str:
+    """Return searchable text for a draft list item."""
+    if draft_type == "article":
+        return " ".join(str(item.get(key) or "") for key in ("title", "summary"))
+    if draft_type == "answer":
+        question = item.get("question") or {}
+        return " ".join(str(value or "") for value in (
+            question.get("title"), item.get("excerpt"), item.get("content"),
+        ))
+    if draft_type == "video":
+        return " ".join(str(item.get(key) or "") for key in ("title", "description"))
+    title, body = _draft_title_and_body(item)
+    return f"{title} {body}"
+
+
+def _draft_title_and_content(client, draft_type: str, item: dict) -> tuple[str, str]:
+    """Return a draft title and readable body for Markdown export."""
+    if draft_type == "article":
+        detail = client.get_article_draft(str(item.get("id")))
+        return (
+            strip_html(detail.get("title") or "（无标题）"),
+            _article_plain_text(detail.get("content") or ""),
+        )
+    if draft_type == "answer":
+        question = item.get("question") or {}
+        title = strip_html(question.get("title") or "（无题目）")
+        content = item.get("content") or item.get("editable_content") or item.get("excerpt") or ""
+        if isinstance(content, dict):
+            content = content.get("content") or content.get("text") or ""
+        return title, _article_plain_text(str(content))
+    if draft_type == "video":
+        return (
+            strip_html(item.get("title") or "（无标题）"),
+            strip_html(item.get("description") or ""),
+        )
+    return _draft_title_and_body(item)
+
+
+def _write_markdown_export(
+    client,
+    draft_type: str,
+    items: list[dict],
+    output_path: Path,
+) -> None:
+    """Write selected drafts to a Markdown file."""
+    blocks = ["# 知乎草稿导出", ""]
+    for index, item in enumerate(items, 1):
+        title, content = _draft_title_and_content(client, draft_type, item)
+        draft_id = item.get("id") or item.get("content_id") or "—"
+        updated = item.get("updated") or item.get("updated_time") or item.get("updated_at")
+        if draft_type == "idea":
+            updated = item.get("updated_at") or (item.get("result") or {}).get("updated_at")
+        blocks.extend([
+            f"## {index}. {title}",
+            "",
+            f"- 类型：{draft_type}",
+            f"- ID：{draft_id}",
+            f"- 更新时间：{_format_draft_time(updated)}",
+            "",
+            content or "（暂无正文）",
+            "",
+        ])
+    output_path.expanduser().resolve().write_text(
+        "\n".join(blocks), encoding="utf-8",
+    )
+
+
+@click.command()
+@click.option(
+    "-l", "--limit", default=20, type=click.IntRange(1, 20),
+    help="Number of drafts per page", show_default=True,
+)
+@click.option(
+    "-t", "--type", "draft_type", default="article",
+    type=click.Choice(["article", "idea", "answer", "video"]), show_default=True,
+    help="Draft type to list",
+)
+@click.option("--all", "fetch_all", is_flag=True, help="Fetch all pages")
+@click.option(
+    "--search", "search_term", default="",
+    help="Filter this page; combine with --all to search every page",
+)
+@click.option(
+    "--id", "draft_id", type=click.IntRange(min=1),
+    help="Read one article draft in full",
+)
+@click.option(
+    "--export-markdown", "export_markdown", type=click.Path(dir_okay=False, path_type=Path),
+    help="Export the selected drafts to a Markdown file",
+)
+@click.option("--json", "as_json", is_flag=True, help="Output raw JSON")
+def drafts(
+    limit: int,
+    draft_type: str,
+    fetch_all: bool,
+    search_term: str,
+    draft_id: int | None,
+    export_markdown: Path | None,
+    as_json: bool,
+):
+    """List, search, read, or export article and other drafts (read-only)."""
+    with _get_client() as client:
+        try:
+            if as_json and export_markdown:
+                raise ValueError("--json and --export-markdown cannot be used together")
+            if draft_id is not None:
+                if draft_type != "article":
+                    raise ValueError("--id is only supported for article drafts")
+                detail = client.get_article_draft(str(draft_id))
+                if export_markdown:
+                    _write_markdown_export(
+                        client,
+                        draft_type,
+                        [{"id": draft_id, **detail}],
+                        export_markdown,
+                    )
+                    print_success(f"Exported draft to {export_markdown}")
+                    return
+                if as_json:
+                    click.echo(json.dumps(detail, indent=2, ensure_ascii=False))
+                    return
+
+                title = strip_html(detail.get("title") or "（无标题）")
+                updated = _format_draft_time(detail.get("updated"))
+                content = _article_plain_text(detail.get("content") or "")
+                console.print()
+                console.print(Text(title, style="bold cyan"))
+                console.print(f"[dim]ID: {draft_id}  Updated: {updated}[/dim]")
+                console.print()
+                console.print(Text(content or "（无正文）"))
+                console.print()
+                return
+
+            fetchers = {
+                "article": client.get_article_drafts,
+                "idea": client.get_drafts,
+                "answer": client.get_answer_drafts,
+                "video": client.get_video_drafts,
+            }
+            fetch_page = fetchers[draft_type]
+            all_items, last_result, total = _fetch_draft_pages(
+                fetch_page, limit, fetch_all,
+            )
+            if search_term:
+                needle = search_term.casefold()
+                all_items = [
+                    item for item in all_items
+                    if needle in _draft_search_text(draft_type, item).casefold()
+                ]
+                last_result = dict(last_result)
+                last_result["data"] = all_items
+                last_result["paging"] = dict(last_result.get("paging") or {})
+                last_result["paging"]["filtered_count"] = len(all_items)
+                if fetch_all:
+                    total = len(all_items)
+                    last_result["paging"].update({
+                        "is_start": True,
+                        "is_end": True,
+                        "next": None,
+                        "totals": total,
+                    })
+        except Exception as e:
+            print_error(f"Failed to fetch drafts: {e}")
+            sys.exit(1)
+
+        if export_markdown:
+            try:
+                _write_markdown_export(
+                    client, draft_type, all_items, export_markdown,
+                )
+            except Exception as e:
+                print_error(f"Failed to export drafts: {e}")
+                sys.exit(1)
+            print_success(
+                f"Exported {len(all_items)} {draft_type} drafts to {export_markdown}"
+            )
+            return
+
+        if as_json:
+            output = (
+                _merge_paged_result(last_result, all_items, total)
+                if fetch_all
+                else last_result
+            )
+            click.echo(json.dumps(output, indent=2, ensure_ascii=False))
+            return
+
+        if not all_items:
+            print_info(f"No {draft_type} drafts")
+            return
+
+        if draft_type == "article":
+            table = make_table(
+                f" Article Drafts ({total if total is not None else len(all_items)}) "
+            )
+            table.add_column("#", style="dim", width=4)
+            table.add_column("ID", width=21)
+            table.add_column("Updated", width=16)
+            table.add_column("Words", width=8, justify="right")
+            table.add_column("Title", ratio=1)
+
+            for index, item in enumerate(all_items, 1):
+                title = strip_html(item.get("title") or "（无标题）")
+                table.add_row(
+                    str(index),
+                    Text(str(item.get("id") or "—")),
+                    _format_draft_time(item.get("updated")),
+                    str(item.get("content_words") or 0),
+                    Text(truncate(title, 70)),
+                )
+        elif draft_type == "idea":
+            table = make_table(
+                f" Idea Drafts ({total if total is not None else len(all_items)}) "
+            )
+            table.add_column("#", style="dim", width=4)
+            table.add_column("ID", width=20)
+            table.add_column("Updated", width=16)
+            table.add_column("Draft", ratio=1)
+
+            for index, item in enumerate(all_items, 1):
+                result = item.get("result") or {}
+                draft_id = item.get("content_id") or result.get("id") or "—"
+                updated_at = item.get("updated_at") or result.get("updated_at")
+                title, body = _draft_title_and_body(item)
+                summary = title if not body else f"{title}：{body}"
+                table.add_row(
+                    str(index),
+                    str(draft_id),
+                    _format_draft_time(updated_at),
+                    Text(truncate(summary, 100)),
+                )
+        elif draft_type == "answer":
+            table = make_table(
+                f" Answer Drafts ({total if total is not None else len(all_items)}) "
+            )
+            table.add_column("#", style="dim", width=4)
+            table.add_column("Updated", width=16)
+            table.add_column("Words", width=8, justify="right")
+            table.add_column("Question", ratio=1)
+
+            for index, item in enumerate(all_items, 1):
+                question = item.get("question") or {}
+                question_title = strip_html(
+                    question.get("title") or item.get("excerpt") or "（无题目）"
+                )
+                table.add_row(
+                    str(index),
+                    _format_draft_time(item.get("updated_time")),
+                    str(item.get("content_words") or 0),
+                    Text(truncate(question_title, 100)),
+                )
+        else:
+            table = make_table(
+                f" Video Drafts ({total if total is not None else len(all_items)}) "
+            )
+            table.add_column("#", style="dim", width=4)
+            table.add_column("ID", width=20)
+            table.add_column("Updated", width=16)
+            table.add_column("State", width=12)
+            table.add_column("Title", ratio=1)
+
+            for index, item in enumerate(all_items, 1):
+                state = item.get("zvideo_state") or item.get("type") or "—"
+                table.add_row(
+                    str(index),
+                    Text(str(item.get("id") or "—")),
+                    _format_draft_time(item.get("updated_at")),
+                    str(state),
+                    Text(truncate(strip_html(item.get("title") or "（无标题）"), 70)),
+                )
+
+        console.print()
+        console.print(table)
+        console.print()
+
+        if draft_type == "article":
+            print_hint("Use [bold]zhihu drafts --id <ID>[/bold] to read an article in full")
+
+        paging = last_result.get("paging") or {}
+        if search_term and not fetch_all and not paging.get("is_end", True):
+            print_hint(
+                "Search covered the current page; use [bold]--all[/bold] "
+                "to search every draft"
+            )
+        if not fetch_all and not paging.get("is_end", True):
+            shown_total = total if total is not None else "更多"
+            print_hint(
+                f"Showing {len(all_items)} of {shown_total} drafts; "
+                "use [bold]zhihu drafts --all[/bold] to fetch all"
+            )
+
+
+@click.command("article-read")
+@click.argument("article_id")
+@click.option("--json", "as_json", is_flag=True, help="Output raw JSON")
+def article_read(article_id: str, as_json: bool):
+    """Read a published article by ID."""
+    with _get_client() as client:
+        try:
+            article = client.get_article(article_id)
+        except Exception as e:
+            print_error(f"Failed to fetch article: {e}")
+            sys.exit(1)
+
+        if as_json:
+            click.echo(json.dumps(article, indent=2, ensure_ascii=False))
+            return
+
+        title = strip_html(article.get("title") or "（无标题）")
+        content = _article_plain_text(article.get("content") or "")
+        console.print()
+        console.print(Text(title, style="bold cyan"))
+        console.print(f"[dim]ID: {article_id}[/dim]")
+        console.print()
+        console.print(Text(content or "（无正文）"))
+        console.print()
+
+
+@click.command("pin-read")
+@click.argument("pin_id")
+@click.option("--json", "as_json", is_flag=True, help="Output raw JSON")
+def pin_read(pin_id: str, as_json: bool):
+    """Read a published idea/pin by ID."""
+    with _get_client() as client:
+        try:
+            pin = client.get_pin(pin_id)
+        except Exception as e:
+            print_error(f"Failed to fetch pin: {e}")
+            sys.exit(1)
+
+        if as_json:
+            click.echo(json.dumps(pin, indent=2, ensure_ascii=False))
+            return
+
+        title = strip_html(pin.get("excerpt_title") or "（无标题）")
+        content = _article_plain_text(
+            pin.get("content_html") or pin.get("content") or ""
+        )
+        console.print()
+        console.print(Text(title, style="bold cyan"))
+        console.print(f"[dim]ID: {pin_id}[/dim]")
+        console.print()
+        console.print(Text(content or "（无正文）"))
+        console.print()
 
 
 @click.command()
@@ -67,25 +485,20 @@ def _run_official_content(args: list[str]) -> None:
 @click.option("-l", "--limit", default=10, help="Max results", show_default=True)
 @click.option("-a", "--answers", default=3, help="Answers per question (0=hide)", show_default=True)
 @click.option("--json", "as_json", is_flag=True, help="Output raw JSON")
-@click.option("--session", "force_session", is_flag=True, help="Force the Web Session backend")
-@click.option("--api", "force_api", is_flag=True, help="Force the Official API backend")
+@click.option("--session", "force_session", is_flag=True)
+@click.option("--api", "force_api", is_flag=True)
 @click.pass_context
 def search(
-    ctx: click.Context,
-    query: str,
-    search_type: str,
-    limit: int,
-    answers: int,
-    as_json: bool,
-    force_session: bool,
-    force_api: bool,
+    ctx: click.Context, query: str, search_type: str, limit: int, answers: int,
+    as_json: bool, force_session: bool, force_api: bool,
 ):
     """Search Zhihu content."""
     try:
-        backend = choose_backend(
-            "session" if force_session else "api" if force_api else (ctx.find_root().obj or {}).get("backend"),
-            load_settings(),
+        requested = (
+            "session" if force_session else "api" if force_api
+            else (ctx.find_root().obj or {}).get("backend")
         )
+        backend = choose_backend(requested, load_settings())
     except BackendUnavailable as exc:
         print_error(str(exc))
         click.echo(first_run_guidance(load_settings()["language"]), err=True)
@@ -94,9 +507,21 @@ def search(
         if search_type != "general":
             print_error("Official API search supports Zhihu/general search only")
             raise click.exceptions.Exit(2)
-        _run_official_content(["search", "zhihu", "--query", query, "--count", str(limit)])
+        try:
+            result = run_official(
+                ["search", "zhihu", "--query", query, "--count", str(limit)],
+                timeout=60,
+            )
+        except OfficialCliError as exc:
+            print_error(str(exc))
+            raise click.exceptions.Exit(1) from exc
+        if result.stdout:
+            click.echo(result.stdout, nl=False)
+        if result.stderr:
+            click.echo(result.stderr, nl=False, err=True)
+        if result.returncode:
+            raise click.exceptions.Exit(result.returncode)
         return
-
     with _get_client() as client:
         try:
             results = client.search(query, search_type=search_type, limit=limit)
@@ -148,94 +573,19 @@ def search(
                         a_content = strip_html(a.get("excerpt", a.get("content", "")))
                         a_upvotes = format_count(a.get("voteup_count", 0))
                         console.print(
-                            f"    [dim]{a_author}:[/dim] {a_content}  [dim]{a_upvotes} upvotes[/dim]"
+                            f"    [dim]{a_author}:[/dim] {a_content}  "
+                            f"[dim]{a_upvotes} upvotes[/dim]"
                         )
 
         console.print()
 
 
 @click.command()
-@click.option("-l", "--limit", default=20, help="Maximum number of drafts", show_default=True)
-@click.option("--json", "as_json", is_flag=True, help="Output raw JSON")
-@click.option(
-    "--open",
-    "open_index",
-    type=click.IntRange(min=1),
-    help="Open a selected draft as a local Markdown file in the system app",
-)
-def drafts(limit: int, as_json: bool, open_index: int | None):
-    """List draft titles (read-only; editing stays in an external app)."""
-    from .interact import _get_client
-
-    with _get_client() as client:
-        try:
-            result = client.get_drafts(limit=limit)
-        except Exception as exc:
-            print_error(f"Failed to fetch drafts: {exc}")
-            raise click.exceptions.Exit(1) from exc
-
-    if as_json:
-        click.echo(json.dumps(result, indent=2, ensure_ascii=False))
-        return
-    data = result.get("data", []) if isinstance(result, dict) else []
-    if not data:
-        print_info("No drafts found")
-        return
-    if open_index is not None:
-        if open_index > len(data):
-            raise click.ClickException(f"Draft selection out of range: {open_index}")
-        draft = data[open_index - 1] if isinstance(data[open_index - 1], dict) else {}
-        title = str(draft.get("title") or draft.get("name") or "untitled")
-        body = draft.get("content") or draft.get("body") or draft.get("description") or ""
-        markdown_dir = Path.home() / ".zhihu-cli" / "drafts"
-        markdown_dir.mkdir(parents=True, exist_ok=True)
-        draft_id = str(draft.get("id") or open_index)
-        markdown_path = markdown_dir / f"{draft_id}.md"
-        markdown_path.write_text(f"# {title}\n\n{strip_html(str(body))}\n", encoding="utf-8")
-        opener = shutil.which("open") or shutil.which("xdg-open")
-        if not opener:
-            print_info(f"Markdown draft saved to {markdown_path}")
-            return
-        subprocess.Popen([opener, str(markdown_path)])
-        print_success(f"Opened draft in Markdown app: {markdown_path}")
-        return
-    table = make_table(" Drafts · title only ")
-    table.add_column("#", width=4, style="dim")
-    table.add_column("Title", ratio=1)
-    table.add_column("Type", width=10)
-    for index, item in enumerate(data, 1):
-        item = item if isinstance(item, dict) else {}
-        table.add_row(
-            str(index),
-            str(item.get("title") or item.get("name") or "（无标题）"),
-            str(item.get("type") or item.get("action") or "draft"),
-        )
-    console.print(table)
-    print_hint("草稿列表只显示标题；使用 zhihu drafts --open N 在 Markdown 应用中打开本地副本。")
-
-
-@click.command()
 @click.option("-l", "--limit", default=50, help="Number of hot questions", show_default=True)
 @click.option("-a", "--answers", default=3, help="Answers per question (0=hide)", show_default=True)
 @click.option("--json", "as_json", is_flag=True, help="Output raw JSON")
-@click.option("--session", "force_session", is_flag=True, help="Force the Web Session backend")
-@click.option("--api", "force_api", is_flag=True, help="Force the Official API backend")
-@click.pass_context
-def hot(ctx: click.Context, limit: int, answers: int, as_json: bool, force_session: bool, force_api: bool):
+def hot(limit: int, answers: int, as_json: bool):
     """Show trending questions (热榜)."""
-    try:
-        backend = choose_backend(
-            "session" if force_session else "api" if force_api else (ctx.find_root().obj or {}).get("backend"),
-            load_settings(),
-        )
-    except BackendUnavailable as exc:
-        print_error(str(exc))
-        click.echo(first_run_guidance(load_settings()["language"]), err=True)
-        raise click.exceptions.Exit(1) from exc
-    if backend.value == "api":
-        _run_official_content(["hot", "--limit", str(limit)])
-        return
-
     with _get_client() as client:
         try:
             results = client.get_hot_list(limit=limit)
@@ -281,7 +631,8 @@ def hot(ctx: click.Context, limit: int, answers: int, as_json: bool, force_sessi
                         a_excerpt = strip_html(a.get("excerpt", a.get("content", "")))
                         a_upvotes = format_count(a.get("voteup_count", 0))
                         console.print(
-                            f"    [dim]{a_author}:[/dim] {a_excerpt}  [dim]{a_upvotes} upvotes[/dim]"
+                            f"    [dim]{a_author}:[/dim] {a_excerpt}  "
+                            f"[dim]{a_upvotes} upvotes[/dim]"
                         )
                 else:
                     console.print("    [dim]No answers[/dim]")
@@ -482,7 +833,10 @@ def feed(limit: int, as_json: bool):
 
 @click.command()
 @click.option("-l", "--limit", default=6, help="Number of feed items", show_default=True)
-@click.option("-c", "--comment-limit", default=10, help="Comments per item (0=hide)", show_default=True)
+@click.option(
+    "-c", "--comment-limit", default=10,
+    help="Comments per item (0=hide)", show_default=True,
+)
 def feeds(limit: int, comment_limit: int):
     """Show recommended feed with comments (推荐+评论)."""
     with _get_client() as client:

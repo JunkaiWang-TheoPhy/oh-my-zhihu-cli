@@ -3,19 +3,19 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "pyzhihu-cli"
-version = "0.2.4"
-description = "知乎命令行工具 — 在终端搜索问题、查看回答、发布提问、发布想法、发布文章(图文混合，富文本支持)、浏览热榜，支持二维码登录与Cookie登录"
+name = "oh-my-zhihu-cli"
+version = "0.3.0"
+description = "AGPL-3.0 Zhihu CLI with read-only drafts, profiles, backups, and guarded writes"
 readme = "README.md"
-license = { text = "Apache-2.0" }
+license = { text = "AGPL-3.0-only" }
 requires-python = ">=3.10"
-authors = [{ name = "BAIGUANGMEI" }]
+authors = [{ name = "Junkai Wang" }]
 keywords = ["zhihu", "cli", "知乎"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Environment :: Console",
     "Intended Audience :: Developers",
-    "License :: OSI Approved :: Apache Software License",
+    "License :: OSI Approved :: GNU Affero General Public License v3",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
@@ -32,8 +32,9 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/BAIGUANGMEI/zhihu-cli"
-Repository = "https://github.com/BAIGUANGMEI/zhihu-cli"
+Homepage = "https://github.com/JunkaiWang-TheoPhy/oh-my-zhihu-cli"
+Repository = "https://github.com/JunkaiWang-TheoPhy/oh-my-zhihu-cli"
+Upstream = "https://github.com/BAIGUANGMEI/zhihu-cli"
 
 [project.scripts]
 zhihu = "zhihu_cli.cli:cli"

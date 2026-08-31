@@ -17,7 +17,7 @@ from ..auth import (
     qrcode_login,
     save_cookies,
 )
-from ..config import REQUIRED_COOKIES
+from ..config import REQUIRED_COOKIES, list_profiles
 from ..display import (
     console,
     format_count,
@@ -191,6 +191,20 @@ def status():
 
     print_success("Authenticated [dim](saved cookie)[/dim]")
     print_hint("Run [bold]zhihu whoami[/bold] to view profile")
+
+
+@click.command()
+@click.pass_context
+def profiles(ctx: click.Context):
+    """List locally configured account profiles."""
+    names = list_profiles()
+    if not names:
+        print_info("No saved profiles")
+        return
+    active = (ctx.find_root().params or {}).get("profile", "default")
+    for name in names:
+        marker = "*" if name == active else " "
+        console.print(f"{marker} {name}")
 
 
 @click.command()

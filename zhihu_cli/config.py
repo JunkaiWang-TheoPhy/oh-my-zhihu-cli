@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 # Application directories
@@ -10,6 +11,55 @@ COOKIE_FILE = CONFIG_DIR / "cookies.json"
 CONFIG_FILE = CONFIG_DIR / "settings.json"
 # QR code image path for AI Agent (e.g. OpenClaw) to send to user for scan login
 QRCODE_IMAGE_PATH = CONFIG_DIR / "login_qrcode.png"
+DEFAULT_PROFILE = "default"
+_PROFILE_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}\Z")
+
+
+def validate_profile(profile: str) -> str:
+    """Validate a profile name before using it in a filesystem path."""
+    if not isinstance(profile, str) or not _PROFILE_RE.fullmatch(profile):
+        raise ValueError(
+            "Profile must start with a letter or digit and contain only "
+            "letters, digits, '.', '_' or '-'."
+        )
+    return profile
+
+
+def get_profile_dir(profile: str = DEFAULT_PROFILE) -> Path:
+    """Return the configuration directory for a named profile."""
+    profile = validate_profile(profile)
+    if profile == DEFAULT_PROFILE:
+        return CONFIG_DIR
+    return CONFIG_DIR / "profiles" / profile
+
+
+def get_cookie_file(profile: str = DEFAULT_PROFILE) -> Path:
+    """Return the Cookie path, preserving the legacy default location."""
+    if profile == DEFAULT_PROFILE:
+        return COOKIE_FILE
+    return get_profile_dir(profile) / "cookies.json"
+
+
+def get_qrcode_image_path(profile: str = DEFAULT_PROFILE) -> Path:
+    """Return the QR image path for a profile."""
+    if profile == DEFAULT_PROFILE:
+        return QRCODE_IMAGE_PATH
+    return get_profile_dir(profile) / "login_qrcode.png"
+
+
+def list_profiles() -> list[str]:
+    """List profiles without reading their credential contents."""
+    names = []
+    if COOKIE_FILE.exists():
+        names.append(DEFAULT_PROFILE)
+    profiles_dir = CONFIG_DIR / "profiles"
+    if profiles_dir.exists():
+        names.extend(
+            child.name
+            for child in profiles_dir.iterdir()
+            if child.is_dir() and (child / "cookies.json").exists()
+        )
+    return sorted(set(names))
 
 # Required cookies for API requests (z_c0 = auth token; _xsrf = CSRF; d_c0 = device)
 REQUIRED_COOKIES = frozenset({"z_c0", "_xsrf", "d_c0"})

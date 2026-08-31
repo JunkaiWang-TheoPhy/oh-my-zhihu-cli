@@ -737,7 +737,7 @@ class TestCreatePinWithImages:
             assert payload["data"]["title"]["title"] == "My title"
             assert "hybrid" in payload["data"]
             assert "Body content" in payload["data"]["hybrid"]["html"]
-            assert payload["data"]["hybrid"]["textLength"] == 12
+            assert payload["data"]["hybrid"]["textLength"] == 20
 
     def test_without_images_uses_content_publish(self, client):
         """Pin without images uses content/publish (draft + publish), no media."""

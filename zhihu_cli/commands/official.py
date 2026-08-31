@@ -41,7 +41,7 @@ def api(ctx: click.Context, official_args: tuple[str, ...]) -> None:
     try:
         result = run_official(
             list(official_args),
-            timeout=float((ctx.find_root().obj or {}).get("timeout", 60)),
+            timeout=float((ctx.find_root().obj or {}).get("official_timeout", 60)),
         )
     except OfficialCliError as exc:
         print_error(str(exc))

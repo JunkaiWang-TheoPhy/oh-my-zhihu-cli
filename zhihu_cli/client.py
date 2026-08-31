@@ -41,7 +41,20 @@ class ZhihuClient:
     Uses cookie authentication to access Zhihu's V4 API.
     """
 
-    def __init__(self, cookie_dict: dict):
+    def __init__(self, cookie_dict: dict, timeout: float | None = None,
+                 retries: int | None = None):
+        runtime = {}
+        try:
+            import click
+            ctx = click.get_current_context(silent=True)
+            if ctx is not None:
+                runtime = ctx.find_root().obj or {}
+        except (ImportError, RuntimeError):
+            pass
+        self._timeout = float(
+            timeout if timeout is not None else runtime.get("timeout", DEFAULT_TIMEOUT)
+        )
+        self._retries = int(retries if retries is not None else runtime.get("retry", 0))
         self._session = requests.Session()
         self._session.headers.update(get_browser_headers())
         for name, value in cookie_dict.items():
@@ -65,10 +78,20 @@ class ZhihuClient:
 
     def _get(self, url: str, params: dict | None = None) -> Any:
         """Make a GET request and return JSON response."""
-        try:
-            resp = self._session.get(url, params=params, timeout=DEFAULT_TIMEOUT)
-        except requests.RequestException as e:
-            raise DataFetchError(f"Request failed: {e}") from e
+        resp = None
+        for attempt in range(self._retries + 1):
+            try:
+                resp = self._session.get(url, params=params, timeout=self._timeout)
+            except requests.RequestException as e:
+                if attempt >= self._retries:
+                    raise DataFetchError(f"Request failed: {e}") from e
+                continue
+            if 500 <= resp.status_code < 600 and attempt < self._retries:
+                continue
+            break
+
+        if resp is None:
+            raise DataFetchError("Request failed without a response")
 
         if resp.status_code == 401:
             raise LoginError("Session expired or not logged in")
@@ -197,6 +220,23 @@ class ZhihuClient:
             ),
         }
         return self._get(url, params=params)
+
+    # ===== Article / Pin Detail =====
+
+    def get_article(self, article_id: str) -> dict:
+        """Get a published article by ID."""
+        url = f"{ZHIHU_API_V4}/articles/{article_id}"
+        params = {
+            "include": (
+                "content,voteup_count,comment_count,created,updated,"
+                "author,topics"
+            ),
+        }
+        return self._get(url, params=params)
+
+    def get_pin(self, pin_id: str) -> dict:
+        """Get a published idea/pin by ID."""
+        return self._get(f"{ZHIHU_API_V4}/pins/{pin_id}")
 
     # ===== User Profile =====
 
@@ -554,6 +594,62 @@ class ZhihuClient:
             raise DataFetchError("Draft created but no content_id returned")
         return str(content_id)
 
+    def get_drafts(self, offset: int = 0, limit: int = 20) -> dict:
+        """List the current user's idea drafts without modifying them."""
+        result = self._get(
+            ZHIHU_CONTENT_DRAFTS_URL,
+            params={
+                "action": "pin",
+                "offset": offset,
+                "limit": limit,
+            },
+        )
+        if not isinstance(result, dict):
+            raise DataFetchError("Draft list returned an invalid response")
+
+        code = result.get("code")
+        if code not in (None, 0):
+            message = result.get("message") or "Unknown error"
+            raise DataFetchError(f"Fetch drafts failed: {message}")
+        return result
+
+    def get_article_drafts(self, offset: int = 0, limit: int = 20) -> dict:
+        """List the current user's article drafts without modifying them."""
+        result = self._get(
+            f"{ZHIHU_API_V4}/articles/my_drafts",
+            params={"offset": offset, "limit": limit},
+        )
+        if not isinstance(result, dict):
+            raise DataFetchError("Article draft list returned an invalid response")
+        return result
+
+    def get_article_draft(self, draft_id: str) -> dict:
+        """Read one article draft without modifying it."""
+        result = self._get(f"{ZHIHU_API_V4}/articles/{draft_id}/draft")
+        if not isinstance(result, dict):
+            raise DataFetchError("Article draft returned an invalid response")
+        return result
+
+    def get_answer_drafts(self, offset: int = 0, limit: int = 20) -> dict:
+        """List the current user's answer drafts without modifying them."""
+        result = self._get(
+            f"{ZHIHU_API_V4}/answer-drafts",
+            params={"offset": offset, "limit": limit},
+        )
+        if not isinstance(result, dict):
+            raise DataFetchError("Answer draft list returned an invalid response")
+        return result
+
+    def get_video_drafts(self, offset: int = 0, limit: int = 20) -> dict:
+        """List the current user's video drafts without modifying them."""
+        result = self._get(
+            f"{ZHIHU_API_V4}/zvideos/drafts",
+            params={"offset": offset, "limit": limit},
+        )
+        if not isinstance(result, dict):
+            raise DataFetchError("Video draft list returned an invalid response")
+        return result
+
     def _content_publish(self, payload: dict) -> dict:
         """Post to the unified content/publish endpoint."""
         headers = {"x-requested-with": "fetch"}
@@ -588,6 +684,61 @@ class ZhihuClient:
         return data
 
     # ===== Create Question =====
+
+    def create_answer(self, question_id: str, content: str,
+                      is_anonymous: bool = False) -> dict:
+        """Create an answer; callers must provide their own write confirmation."""
+        url = f"{ZHIHU_API_V4}/questions/{question_id}/answers"
+        payload = {"content": content, "is_anonymous": is_anonymous}
+        try:
+            resp = self._session.post(url, json=payload, timeout=self._timeout)
+        except requests.RequestException as e:
+            raise DataFetchError(f"Create answer failed: {e}") from e
+        if resp.status_code == 401:
+            raise LoginError("Session expired or not logged in")
+        if resp.status_code == 403:
+            raise DataFetchError("No permission to answer this question")
+        if resp.status_code not in (200, 201):
+            raise DataFetchError(
+                f"Create answer failed ({resp.status_code}): {resp.text[:200]}"
+            )
+        try:
+            data = resp.json()
+        except ValueError as e:
+            raise DataFetchError(f"Invalid answer response: {e}") from e
+        if isinstance(data, dict) and data.get("error"):
+            raise DataFetchError(str(data["error"]))
+        return data if isinstance(data, dict) else {"data": data}
+
+    def create_comment(self, target_type: str, target_id: str,
+                       content: str, reply_to: str | None = None) -> dict:
+        """Create a top-level or reply comment on an answer/article/pin."""
+        plural = {"answer": "answers", "article": "articles", "pin": "pins"}
+        if target_type not in plural:
+            raise DataFetchError(f"Unsupported comment target: {target_type}")
+        url = f"{ZHIHU_API_V4}/comment_v5/{plural[target_type]}/{target_id}/comment"
+        payload = {"content": content}
+        if reply_to:
+            payload["reply_comment_id"] = str(reply_to)
+        try:
+            resp = self._session.post(url, json=payload, timeout=self._timeout)
+        except requests.RequestException as e:
+            raise DataFetchError(f"Create comment failed: {e}") from e
+        if resp.status_code == 401:
+            raise LoginError("Session expired or not logged in")
+        if resp.status_code == 403:
+            raise DataFetchError("No permission to comment on this content")
+        if resp.status_code not in (200, 201):
+            raise DataFetchError(
+                f"Create comment failed ({resp.status_code}): {resp.text[:200]}"
+            )
+        try:
+            data = resp.json()
+        except ValueError as e:
+            raise DataFetchError(f"Invalid comment response: {e}") from e
+        if isinstance(data, dict) and data.get("error"):
+            raise DataFetchError(str(data["error"]))
+        return data if isinstance(data, dict) else {"data": data}
 
     def create_question(self, title: str, detail: str = "",
                         topic_ids: list[str] | None = None,
@@ -878,6 +1029,13 @@ class ZhihuClient:
         if not url_token:
             raise LoginError("Cannot retrieve user info — confirm login status")
         url = f"{ZHIHU_API_V4}/members/{url_token}/favlists"
+        params = {"offset": offset, "limit": limit}
+        return self._get(url, params=params)
+
+    def get_collection_items(self, collection_id: str,
+                             offset: int = 0, limit: int = 20) -> dict:
+        """Get items in a collection."""
+        url = f"{ZHIHU_API_V4}/collections/{collection_id}/contents"
         params = {"offset": offset, "limit": limit}
         return self._get(url, params=params)
 

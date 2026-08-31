@@ -16,40 +16,75 @@ import json
 import logging
 import time
 
+import click
 import requests
 
 from .accounts import AccountStore, context_account_name
 from .config import (
     CONFIG_DIR,
-    COOKIE_FILE,
+    DEFAULT_PROFILE,
     DEFAULT_TIMEOUT,
-    QRCODE_IMAGE_PATH,
     REQUIRED_COOKIES,
     ZHIHU_BASE_URL,
     ZHIHU_LOGIN_URL,
     ZHIHU_OAUTH_CAPTCHA,
     ZHIHU_QRCODE_API,
     get_browser_headers,
+    get_cookie_file,
+    get_qrcode_image_path,
+    validate_profile,
 )
 from .display import console, print_hint, print_info
 from .exceptions import LoginError
 
+COOKIE_FILE = get_cookie_file(DEFAULT_PROFILE)
+QRCODE_IMAGE_PATH = get_qrcode_image_path(DEFAULT_PROFILE)
+
 logger = logging.getLogger(__name__)
 
 
-def get_saved_cookie_string(account_name: str | None = None) -> str | None:
+def _active_profile(profile: str | None = None) -> str:
+    """Resolve the selected profile from an explicit value or Click context."""
+    if profile is not None:
+        return validate_profile(profile)
+    try:
+        ctx = click.get_current_context(silent=True)
+        if ctx is not None:
+            root = ctx.find_root()
+            profile = (root.params or {}).get("profile")
+            if profile is None:
+                profile = (root.obj or {}).get("profile")
+    except RuntimeError:
+        profile = None
+    return validate_profile(profile or DEFAULT_PROFILE)
+
+
+def get_saved_cookie_string(
+    profile: str | None = None, *, account_name: str | None = None
+) -> str | None:
     """Load only saved cookies from local config file.
 
     This helper never triggers browser extraction and has no write side effects.
     """
-    return _load_saved_cookies(account_name)
+    account = account_name or account_name_for(profile)
+    if account:
+        cookies = AccountStore(CONFIG_DIR).session_cookies(account)
+        return _dict_to_cookie_str(cookies) if cookies else None
+    return _load_saved_cookies(_active_profile(profile))
 
 
-def get_cookie_string(account_name: str | None = None) -> str | None:
+def get_cookie_string(
+    profile: str | None = None, *, account_name: str | None = None
+) -> str | None:
     """Try loading saved cookies. Returns cookie string or None."""
-    cookie = _load_saved_cookies(account_name)
+    account = account_name or account_name_for(profile)
+    if account:
+        cookies = AccountStore(CONFIG_DIR).session_cookies(account)
+        return _dict_to_cookie_str(cookies) if cookies else None
+    active_profile = _active_profile(profile)
+    cookie = _load_saved_cookies(active_profile)
     if cookie:
-        logger.info("Loaded saved cookies from %s", COOKIE_FILE)
+        logger.info("Loaded saved cookies from %s", get_cookie_file(active_profile))
         return cookie
     return None
 
@@ -74,32 +109,14 @@ def _fetch_missing_cookies(cookie_dict: dict) -> dict:
     return out
 
 
-def _load_saved_cookies(account_name: str | None = None) -> str | None:
+def _load_saved_cookies(profile: str = DEFAULT_PROFILE) -> str | None:
     """Load cookies, fetching missing browser cookies when a token is present."""
-    store = AccountStore(CONFIG_DIR)
-    account_name = account_name or context_account_name()
-    stored = store.session_cookies(account_name) if account_name else store.active_session_cookies()
-    if stored:
-        if _has_required_cookies(stored):
-            return _dict_to_cookie_str(stored)
-        if "z_c0" in stored and (REQUIRED_COOKIES - stored.keys()):
-            merged = _fetch_missing_cookies(stored)
-            if _has_required_cookies(merged):
-                save_cookies(
-                    _dict_to_cookie_str(merged),
-                    account_name=account_name or store.active_name("session"),
-                )
-                return _dict_to_cookie_str(merged)
-        return None
-
-    if account_name:
-        return None
-
-    if not COOKIE_FILE.exists():
+    cookie_file = get_cookie_file(profile)
+    if not cookie_file.exists():
         return None
 
     try:
-        data = json.loads(COOKIE_FILE.read_text(encoding="utf-8"))
+        data = json.loads(cookie_file.read_text(encoding="utf-8"))
         cookies = data.get("cookies", {})
         if _has_required_cookies(cookies):
             return _dict_to_cookie_str(cookies)
@@ -107,7 +124,7 @@ def _load_saved_cookies(account_name: str | None = None) -> str | None:
         if "z_c0" in cookies and (REQUIRED_COOKIES - cookies.keys()):
             merged = _fetch_missing_cookies(cookies)
             if _has_required_cookies(merged):
-                save_cookies(_dict_to_cookie_str(merged))
+                save_cookies(_dict_to_cookie_str(merged), profile=profile)
                 return _dict_to_cookie_str(merged)
     except (json.JSONDecodeError, KeyError) as e:
         logger.warning("Failed to load saved cookies: %s", e)
@@ -288,6 +305,7 @@ def _qrcode_login_api() -> str:
         raise LoginError("二维码登录超时或未完成确认（未获取到 z_c0）")
 
     cookie_str = _dict_to_cookie_str(cookie_dict)
+    save_cookies(cookie_str)
     return cookie_str
 
 
@@ -326,13 +344,11 @@ def _save_qrcode_image(qr_text: str) -> None:
     except ImportError:
         return
     try:
-        CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+        image_path = get_qrcode_image_path(_active_profile())
+        image_path.parent.mkdir(parents=True, exist_ok=True)
         img = qrcode.make(qr_text)
-        img.save(QRCODE_IMAGE_PATH)
-        print_hint(
-            f"二维码已保存至: [bold]{QRCODE_IMAGE_PATH}[/bold]"
-            "（AI Agent 可读取并发送给用户扫码）"
-        )
+        img.save(image_path)
+        print_hint(f"二维码已保存至: [bold]{image_path}[/bold]（AI Agent 可读取并发送给用户扫码）")
     except Exception as e:
         logger.debug("Failed to save QR code image: %s", e)
 
@@ -354,33 +370,56 @@ def _display_qr_text_in_terminal(qr_text: str) -> bool:
         return False
 
 
-def save_cookies(cookie_str: str, *, account_name: str | None = None):
+def save_cookies(
+    cookie_str: str, profile: str | None = None, *, account_name: str | None = None
+):
     """Save cookies to config file."""
-    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    cookie_file = get_cookie_file(_active_profile(profile))
+    cookie_file.parent.mkdir(parents=True, exist_ok=True)
 
     cookies = cookie_str_to_dict(cookie_str)
-    store = AccountStore(CONFIG_DIR)
-    name = account_name or store.active_name("session") or "default"
-    store.save_session(name, cookies)
-    logger.info("Cookies saved for account %s", name)
+    account = account_name or account_name_for(profile)
+    if account:
+        AccountStore(CONFIG_DIR).save_session(account, cookies)
+        logger.info("Cookies saved for account %s", account)
+        return
+    data = {"cookies": cookies}
+
+    cookie_file.write_text(
+        json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8"
+    )
+    try:
+        cookie_file.chmod(0o600)
+    except OSError:
+        logger.debug("Failed to set permissions on %s", cookie_file)
+    logger.info("Cookies saved to %s", cookie_file)
 
 
-def clear_cookies(*, account_name: str | None = None, all_accounts: bool = False):
+def clear_cookies(
+    profile: str | None = None, *, account_name: str | None = None
+):
     """Remove saved cookies (for logout)."""
-    store = AccountStore(CONFIG_DIR)
+    cookie_file = get_cookie_file(_active_profile(profile))
     removed = []
-    names = [item.name for item in store.list("session")]
-    targets = names if all_accounts else [account_name or store.active_name("session")]
-    for name in targets:
-        if name and name in [item.name for item in store.list("session")]:
-            store.remove(name, "session")
-            removed.append(name)
-    if not removed and COOKIE_FILE.exists():
-        COOKIE_FILE.unlink()
-        removed.append(COOKIE_FILE.name)
+    account = account_name or account_name_for(profile)
+    if account:
+        store = AccountStore(CONFIG_DIR)
+        if store.session_cookies(account):
+            store.remove(account, "session")
+            return [account]
+    if cookie_file.exists():
+        cookie_file.unlink()
+        removed.append(cookie_file.name)
     if removed:
         logger.info("Removed: %s", ", ".join(removed))
     return removed
+
+
+def account_name_for(profile: str | None = None) -> str | None:
+    """Resolve the explicit named-account override from the root Click context."""
+    if profile is not None and profile != DEFAULT_PROFILE:
+        return profile if AccountStore(CONFIG_DIR).session_cookies(profile) else None
+    return context_account_name()
 
 
 def _has_required_cookies(cookies: dict) -> bool:
