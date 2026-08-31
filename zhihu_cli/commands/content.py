@@ -25,6 +25,8 @@ from ..display import (
     strip_html,
     truncate,
 )
+from ..official import OfficialCliError, run_official
+from ..routing import BackendUnavailable, choose_backend, first_run_guidance, load_settings
 
 
 @contextmanager
@@ -483,8 +485,43 @@ def pin_read(pin_id: str, as_json: bool):
 @click.option("-l", "--limit", default=10, help="Max results", show_default=True)
 @click.option("-a", "--answers", default=3, help="Answers per question (0=hide)", show_default=True)
 @click.option("--json", "as_json", is_flag=True, help="Output raw JSON")
-def search(query: str, search_type: str, limit: int, answers: int, as_json: bool):
+@click.option("--session", "force_session", is_flag=True)
+@click.option("--api", "force_api", is_flag=True)
+@click.pass_context
+def search(
+    ctx: click.Context, query: str, search_type: str, limit: int, answers: int,
+    as_json: bool, force_session: bool, force_api: bool,
+):
     """Search Zhihu content."""
+    try:
+        requested = (
+            "session" if force_session else "api" if force_api
+            else (ctx.find_root().obj or {}).get("backend")
+        )
+        backend = choose_backend(requested, load_settings())
+    except BackendUnavailable as exc:
+        print_error(str(exc))
+        click.echo(first_run_guidance(load_settings()["language"]), err=True)
+        raise click.exceptions.Exit(1) from exc
+    if backend.value == "api":
+        if search_type != "general":
+            print_error("Official API search supports Zhihu/general search only")
+            raise click.exceptions.Exit(2)
+        try:
+            result = run_official(
+                ["search", "zhihu", "--query", query, "--count", str(limit)],
+                timeout=60,
+            )
+        except OfficialCliError as exc:
+            print_error(str(exc))
+            raise click.exceptions.Exit(1) from exc
+        if result.stdout:
+            click.echo(result.stdout, nl=False)
+        if result.stderr:
+            click.echo(result.stderr, nl=False, err=True)
+        if result.returncode:
+            raise click.exceptions.Exit(result.returncode)
+        return
     with _get_client() as client:
         try:
             results = client.search(query, search_type=search_type, limit=limit)
@@ -536,7 +573,8 @@ def search(query: str, search_type: str, limit: int, answers: int, as_json: bool
                         a_content = strip_html(a.get("excerpt", a.get("content", "")))
                         a_upvotes = format_count(a.get("voteup_count", 0))
                         console.print(
-                            f"    [dim]{a_author}:[/dim] {a_content}  [dim]{a_upvotes} upvotes[/dim]"
+                            f"    [dim]{a_author}:[/dim] {a_content}  "
+                            f"[dim]{a_upvotes} upvotes[/dim]"
                         )
 
         console.print()
@@ -593,7 +631,8 @@ def hot(limit: int, answers: int, as_json: bool):
                         a_excerpt = strip_html(a.get("excerpt", a.get("content", "")))
                         a_upvotes = format_count(a.get("voteup_count", 0))
                         console.print(
-                            f"    [dim]{a_author}:[/dim] {a_excerpt}  [dim]{a_upvotes} upvotes[/dim]"
+                            f"    [dim]{a_author}:[/dim] {a_excerpt}  "
+                            f"[dim]{a_upvotes} upvotes[/dim]"
                         )
                 else:
                     console.print("    [dim]No answers[/dim]")
@@ -794,7 +833,10 @@ def feed(limit: int, as_json: bool):
 
 @click.command()
 @click.option("-l", "--limit", default=6, help="Number of feed items", show_default=True)
-@click.option("-c", "--comment-limit", default=10, help="Comments per item (0=hide)", show_default=True)
+@click.option(
+    "-c", "--comment-limit", default=10,
+    help="Comments per item (0=hide)", show_default=True,
+)
 def feeds(limit: int, comment_limit: int):
     """Show recommended feed with comments (推荐+评论)."""
     with _get_client() as client:

@@ -7,8 +7,10 @@ import logging
 import click
 
 from . import __version__
+from .commands.accounts import account
 from .commands.auth import login, logout, profiles, status, whoami
 from .commands.backup import drafts_backup, drafts_diff
+from .commands.config import config
 from .commands.content import (
     answer,
     answers,
@@ -22,10 +24,11 @@ from .commands.content import (
     search,
     topic,
 )
+from .commands.guidance import guidance
 from .commands.interact import (
+    answer_post,
     article,
     ask,
-    answer_post,
     collection,
     collections,
     comment,
@@ -37,8 +40,11 @@ from .commands.interact import (
     pin,
     vote,
 )
+from .commands.official import api
 from .commands.user import followers, following, user, user_answers, user_articles
 from .config import DEFAULT_TIMEOUT, validate_profile
+from .console import run_tui
+from .display import print_banner
 
 
 def _setup_logging(verbose: bool):
@@ -50,7 +56,7 @@ def _setup_logging(verbose: bool):
     )
 
 
-@click.group()
+@click.group(invoke_without_command=True)
 @click.version_option(version=__version__, prog_name="zhihu-cli")
 @click.option("-v", "--verbose", is_flag=True, help="Enable debug logging")
 @click.option("--profile", default="default", show_default=True, help="Account profile")
@@ -66,6 +72,11 @@ def _setup_logging(verbose: bool):
     "--readonly", "--read-only", is_flag=True,
     help="Block commands that write, interact, or delete on Zhihu",
 )
+@click.option(
+    "--account", "account_name", default=None, help="Use a named account for this command"
+)
+@click.option("--api", "force_api", is_flag=True, help="Use the Official API backend")
+@click.option("--session", "force_session", is_flag=True, help="Use the Web Session backend")
 @click.pass_context
 def cli(
     ctx: click.Context,
@@ -74,6 +85,9 @@ def cli(
     timeout: float,
     retry: int,
     readonly: bool,
+    account_name: str | None,
+    force_api: bool,
+    force_session: bool,
 ):
     """zhihu-cli — Zhihu from your terminal."""
     try:
@@ -83,9 +97,14 @@ def cli(
     ctx.ensure_object(dict)
     ctx.obj["profile"] = profile
     ctx.obj["timeout"] = timeout
+    ctx.obj["official_timeout"] = 60.0
     ctx.obj["retry"] = retry
     ctx.obj["readonly"] = readonly
+    ctx.obj["account"] = account_name
+    ctx.obj["backend"] = "api" if force_api else "session" if force_session else None
     _setup_logging(verbose)
+    if ctx.invoked_subcommand is None:
+        print_banner()
 
 
 # Auth
@@ -94,6 +113,12 @@ cli.add_command(logout)
 cli.add_command(status)
 cli.add_command(profiles)
 cli.add_command(whoami)
+cli.add_command(account)
+cli.add_command(account, name="accounts")
+cli.add_command(api)
+cli.add_command(guidance)
+cli.add_command(guidance, name="guide")
+cli.add_command(config)
 
 # Content
 cli.add_command(search)
@@ -131,6 +156,31 @@ cli.add_command(delete_article_cmd)
 cli.add_command(collections)
 cli.add_command(collection)
 cli.add_command(notifications)
+
+
+@click.command(name="zhihu-tui")
+@click.option("--readonly", "--read-only", is_flag=True)
+@click.option("--account", "account_name", default=None, help="Use a named account")
+@click.option("--api", "force_api", is_flag=True)
+@click.option("--session", "force_session", is_flag=True)
+def tui_command(
+    readonly: bool,
+    account_name: str | None,
+    force_api: bool,
+    force_session: bool,
+) -> None:
+    """Open the full-screen Zhihu workbench."""
+    if force_api and force_session:
+        raise click.UsageError("--api and --session cannot be used together")
+    run_tui(
+        readonly=readonly,
+        backend="api" if force_api else "session" if force_session else None,
+        account=account_name,
+    )
+
+
+def tui_entry() -> None:
+    tui_command()
 
 
 if __name__ == "__main__":
