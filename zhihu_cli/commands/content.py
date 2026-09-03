@@ -26,6 +26,13 @@ from ..display import (
     truncate,
 )
 from ..official import OfficialCliError, run_official
+from ..rate_limit import (
+    RateLimitError,
+    RateLimitStateError,
+    current_rate_scope,
+    is_remote_rate_limited,
+    run_limited,
+)
 from ..routing import BackendUnavailable, choose_backend, first_run_guidance, load_settings
 
 
@@ -40,6 +47,14 @@ def _get_client():
         sys.exit(1)
     with ZhihuClient(cookie_str_to_dict(cookie)) as client:
         yield client
+
+
+def _report_rate_limit_error(error: RateLimitError, as_json: bool) -> None:
+    """Keep local guard errors machine-readable when the caller requested JSON."""
+    if as_json:
+        click.echo(json.dumps({"ok": False, "error": error.as_dict()}, ensure_ascii=False))
+    else:
+        print_error(str(error))
 
 
 def _draft_title_and_body(item: dict) -> tuple[str, str]:
@@ -482,7 +497,10 @@ def pin_read(pin_id: str, as_json: bool):
 @click.option("-t", "--type", "search_type", default="general",
               type=click.Choice(["general", "people", "topic"]),
               help="Search scope")
-@click.option("-l", "--limit", default=10, help="Max results", show_default=True)
+@click.option(
+    "-l", "--limit", default=10, type=click.IntRange(1, 10),
+    help="Max results (1-10)", show_default=True,
+)
 @click.option("-a", "--answers", default=3, help="Answers per question (0=hide)", show_default=True)
 @click.option("--json", "as_json", is_flag=True, help="Output raw JSON")
 @click.option("--session", "force_session", is_flag=True)
@@ -511,7 +529,14 @@ def search(
             result = run_official(
                 ["search", "zhihu", "--query", query, "--count", str(limit)],
                 timeout=60,
+                rate_scope=current_rate_scope("api", "zhihu_search"),
             )
+        except RateLimitError as exc:
+            _report_rate_limit_error(exc, as_json)
+            raise click.exceptions.Exit(exc.exit_code) from exc
+        except RateLimitStateError as exc:
+            print_error(str(exc))
+            raise click.exceptions.Exit(1) from exc
         except OfficialCliError as exc:
             print_error(str(exc))
             raise click.exceptions.Exit(1) from exc
@@ -524,11 +549,41 @@ def search(
         return
     with _get_client() as client:
         try:
-            results = client.search(query, search_type=search_type, limit=limit)
+            scope = current_rate_scope("session", "zhihu_search")
+            results = run_limited(
+                scope,
+                lambda: client.search(query, search_type=search_type, limit=limit),
+            )
             data = results.get("data", [])
+        except RateLimitError as exc:
+            _report_rate_limit_error(exc, as_json)
+            raise click.exceptions.Exit(exc.exit_code) from exc
+        except RateLimitStateError as exc:
+            print_error(str(exc))
+            raise click.exceptions.Exit(1) from exc
         except Exception as e:
+            if is_remote_rate_limited(e):
+                if as_json:
+                    click.echo(json.dumps({
+                        "ok": False,
+                        "error": {
+                            "source": "remote",
+                            "code": "REMOTE_RATE_LIMIT",
+                            "message": str(e),
+                        },
+                    }, ensure_ascii=False))
+                else:
+                    print_error("Zhihu returned a rate-limit response; search stopped")
+                raise click.exceptions.Exit(RateLimitError.exit_code) from e
             print_error(f"Search failed: {e}")
             sys.exit(1)
+
+        if is_remote_rate_limited(results):
+            if as_json:
+                click.echo(json.dumps(results, ensure_ascii=False))
+            else:
+                print_error("Zhihu returned a rate-limit response; search stopped")
+            raise click.exceptions.Exit(RateLimitError.exit_code)
 
         if as_json:
             click.echo(json.dumps(results, indent=2, ensure_ascii=False))

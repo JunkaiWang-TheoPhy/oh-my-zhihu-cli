@@ -84,9 +84,11 @@ Official API：公开搜索、本人数据、知识库和额度。
   zhihu --readonly feed
   zhihu --readonly search "关键词"
   zhihu-tui --readonly
+  zhihu rate-limit status --json
 
 只读模式会拦截发布、互动、删除和知识库上传。Session Cookie 存在权限为 0600
 的本地账号文件；命名 API Secret 存入 macOS Keychain，不写入命令参数或配置文件。
+搜索命令还会按账号/profile执行本地硬限流；收到限流错误时不要立即重试。
 """,
 }
 

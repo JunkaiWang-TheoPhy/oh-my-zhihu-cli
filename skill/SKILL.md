@@ -1,6 +1,6 @@
 ---
 name: zhihu-cli
-description: "社区版知乎 CLI：搜索、草稿、文章/想法详情、收藏夹、备份、profile、只读保护与安全写入。Agent 代执行 zhihu 命令，Cookie 仅存本地。"
+description: "社区版知乎 CLI：搜索、草稿、文章/想法详情、收藏夹、备份、profile、查询限流、只读保护与安全写入。Agent 代执行 zhihu 命令，Cookie 仅存本地。"
 author: Junkai Wang
 version: "0.3.0"
 tags:
@@ -51,8 +51,10 @@ tags:
 2. **数据查询优先用 --json**：凡执行**数据查询类**指令（如 `search`、`hot`、`question`、`answers`、`answer`、`user`、`user-answers`、`user-articles`、`followers`、`following`、`feed`、`topic`、`collections`、`notifications`、`whoami` 等），**必须**带 `--json`，以获取 API 返回的完整数据，便于解析、汇总或向用户展示；不得仅依赖终端表格等非结构化输出。例外：`feeds` 当前不支持 `--json`；需要展示回答评论时使用 `answer --comments`（`--json` 只输出回答详情，不输出评论）。
 3. **需登录时**：先 `zhihu status`；未登录则 `zhihu login --qrcode` 或引导用户 `zhihu login --cookie "..."`。
 4. **扫码登录**：执行 `zhihu login --qrcode` 后，若本轮未发过二维码且用户已配置 OpenClaw → 先将二维码复制到 OpenClaw 工作目录的 `media` 文件夹，再 `openclaw message send --channel <渠道> --target <目标> --media <media 路径>/login_qrcode.png --message "请用知乎 App 扫码并确认登录"`；**保持登录进程不中断**直到成功/失败/超时；用户说「重新登录/换号」则中断当前进程再重新执行登录。**复制步骤**：Linux/macOS：`mkdir -p ~/.openclaw/workspace/media && cp ~/.zhihu-cli/login_qrcode.png ~/.openclaw/workspace/media/`；Windows：`mkdir "%USERPROFILE%\.openclaw\workspace\media" 2>nul & copy "%USERPROFILE%\.zhihu-cli\login_qrcode.png" "%USERPROFILE%\.openclaw\workspace\media\login_qrcode.png"`（若 OpenClaw 工作目录不同则替换为实际路径）。
-5. **安全**：Cookie 仅本地；优先扫码，避免在不可信处粘贴 Cookie；可提醒 `zhihu logout` 清空。
-6. **升级**：在 `oh-my-zhihu-cli` 仓库目录执行 `git pull && uv tool install --editable . --force`。
+5. **查询限流**：搜索命令由 CLI 的本地硬闸保护，每个账号或 profile 独立记录；两次搜索至少间隔 3 秒，60 秒最多 10 次，服务端限流后冷却 120 秒。收到 `LOCAL_RATE_LIMIT` 或知乎 `Code=30001` 时停止立即重试，优先复用已有结果；需要检查状态时运行 `zhihu rate-limit status --json`。
+6. **只读优先**：用户只要求查询、检查或预览时，在子命令前加全局 `--readonly`（同义参数 `--read-only`），阻止发布、互动和删除；该拦截发生在读取登录态和创建客户端之前，不会向知乎发请求。
+7. **安全**：Cookie 仅本地；优先扫码，避免在不可信处粘贴 Cookie；可提醒 `zhihu logout` 清空。
+8. **升级**：在 `oh-my-zhihu-cli` 仓库目录执行 `git pull && uv tool install --editable . --force`。
 
 ---
 
@@ -82,6 +84,7 @@ tags:
 | 草稿 | `zhihu --readonly drafts [--type article/idea/answer/video] [--all]` |
 | 草稿备份 / diff | `zhihu --readonly drafts-backup <dir>`；`zhihu drafts-diff <before> <after>` |
 | profile | `zhihu profiles`；`zhihu --profile <name> ...` |
+| 查询限流 | `zhihu rate-limit status [--json]` |
 | 只读模式 | `zhihu --readonly <command>` 或 `--read-only` |
 | 安全写入 | 写入命令使用 `--dry-run`；回答/评论需 `--execute` |
 | 退出 | `zhihu logout` |
@@ -154,3 +157,5 @@ zhihu logout
 - **未登录 / 401 / 403**：先登录（`zhihu login --qrcode` 或 `--cookie`），再执行原命令。
 - **超时 / 网络**：提示重试或检查网络。
 - **其他**：根据 CLI 报错给简短原因与建议（如检查 ID、url_token）。
+- **`LOCAL_RATE_LIMIT` / `Code=30001`**：这是请求频率限制，不是空结果；停止立即重试，读取 `zhihu rate-limit status --json` 并复用已有结果或等待倒计时。
+- **`Code=30002`**：这是额度耗尽；停止继续调用并向用户说明。

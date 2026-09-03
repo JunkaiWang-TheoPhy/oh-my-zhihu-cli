@@ -27,6 +27,7 @@
 - 草稿全文读取、关键词搜索、JSON/Markdown 导出
 - 多账号 profile 隔离
 - GET 请求超时和有限重试
+- 搜索请求本地硬限流与服务端限流冷却
 - 全局 `--readonly` 保护，阻止发布、互动和删除
 - 发布回答、评论前默认 dry-run，明确使用 `--execute` 才发送
 - Rich 终端表格和 JSON 输出
@@ -140,8 +141,28 @@ zhihu --timeout 30 --retry 2 search "AI"
 - `--timeout` 默认 15 秒
 - `--retry` 默认 0，最多允许 5 次重试
 - 只对 GET 请求重试
+- 不会自动重试限流响应
 - 不会自动重试发布、互动或删除请求
 - 代理使用 `HTTP_PROXY`、`HTTPS_PROXY` 和 `ALL_PROXY` 环境变量
+
+## 查询限流
+
+搜索命令有本地硬限制，按账号或 profile 分开记录：
+
+- 两次搜索至少间隔 3 秒
+- 60 秒窗口最多 10 次搜索
+- 收到知乎限流后进入 120 秒本地冷却
+- 默认状态文件为 `~/.zhihu-cli/rate-limit.json`
+- 状态只保存时间戳、接口和错误状态，不保存查询文本或凭证
+
+查看状态：
+
+```bash
+zhihu rate-limit status
+zhihu rate-limit status --json
+```
+
+触发 `LOCAL_RATE_LIMIT` 或知乎 `Code=30001` 时，CLI 不会立即重试。AI 应复用已有结果，或等待状态中的倒计时后再发起一次最小请求。
 
 ## 写入安全
 

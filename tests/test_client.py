@@ -60,6 +60,14 @@ class TestClientGet:
             with pytest.raises(LoginError):
                 client._get("https://example.com")
 
+    def test_429_describes_remote_rate_limit(self, client):
+        with patch.object(
+            client._session, "get",
+            return_value=_make_response(429, text="Too Many Requests"),
+        ):
+            with pytest.raises(DataFetchError, match="rate limit"):
+                client._get("https://example.com")
+
     def test_500_raises_data_fetch_error(self, client):
         with patch.object(
             client._session, "get",

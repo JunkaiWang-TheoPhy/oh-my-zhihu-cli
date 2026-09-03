@@ -6,6 +6,7 @@ import click
 
 from ..display import print_error, print_info
 from ..official import OfficialCliError, run_official
+from ..rate_limit import RateLimitError, RateLimitStateError, current_rate_scope
 
 
 def _scope_prompt() -> None:
@@ -14,6 +15,44 @@ def _scope_prompt() -> None:
         "knowledge bases, and quota; no web-session publishing",
         err=True,
     )
+
+
+def _rate_scope(official_args: tuple[str, ...]) -> str | None:
+    """Rate-limit official search commands while leaving auth/help local."""
+    if len(official_args) >= 2 and official_args[0] == "search":
+        if official_args[1] == "zhihu":
+            if not _valid_search_count(official_args[2:], maximum=10):
+                return None
+            return current_rate_scope("api", "zhihu_search")
+        if official_args[1] == "global":
+            if not _valid_search_count(official_args[2:], maximum=20):
+                return None
+            return current_rate_scope("api", "global_search")
+    return None
+
+
+def _valid_search_count(args: tuple[str, ...], *, maximum: int) -> bool:
+    """Avoid reserving a slot for an Official API argument validation failure."""
+    count: int | None = None
+    index = 0
+    while index < len(args):
+        argument = args[index]
+        if argument == "--count":
+            if index + 1 >= len(args):
+                return False
+            raw_count = args[index + 1]
+            index += 1
+        elif argument.startswith("--count="):
+            raw_count = argument.partition("=")[2]
+        else:
+            index += 1
+            continue
+        try:
+            count = int(raw_count)
+        except ValueError:
+            return False
+        index += 1
+    return count is None or 1 <= count <= maximum
 
 
 @click.command(
@@ -39,10 +78,19 @@ def api(ctx: click.Context, official_args: tuple[str, ...]) -> None:
 
     _scope_prompt()
     try:
-        result = run_official(
-            list(official_args),
-            timeout=float((ctx.find_root().obj or {}).get("official_timeout", 60)),
-        )
+        kwargs = {
+            "timeout": float((ctx.find_root().obj or {}).get("official_timeout", 60)),
+        }
+        rate_scope = _rate_scope(official_args)
+        if rate_scope:
+            kwargs["rate_scope"] = rate_scope
+        result = run_official(list(official_args), **kwargs)
+    except RateLimitError as exc:
+        print_error(str(exc))
+        raise click.exceptions.Exit(exc.exit_code) from exc
+    except RateLimitStateError as exc:
+        print_error(str(exc))
+        raise click.exceptions.Exit(1) from exc
     except OfficialCliError as exc:
         print_error(str(exc))
         raise click.exceptions.Exit(1) from exc
