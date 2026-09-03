@@ -9,6 +9,7 @@ from click.testing import CliRunner
 
 from zhihu_cli.cli import cli
 from zhihu_cli.official import get_official_cli_path, run_official
+from zhihu_cli.rate_limit import RateLimiter
 
 
 def _combined_output(result):
@@ -91,3 +92,23 @@ def test_named_api_account_is_injected_through_environment_not_arguments(tmp_pat
     environment = run.call_args.kwargs["env"]
     assert "named-secret" not in command
     assert environment["ZHIHU_ACCESS_SECRET"] == "named-secret"
+
+
+def test_official_rate_limit_response_starts_local_cooldown(tmp_config_dir, tmp_path, monkeypatch):
+    binary = tmp_path / "zhihu-cli"
+    binary.write_text("binary", encoding="utf-8")
+    binary.chmod(0o755)
+    monkeypatch.setenv("ZHIHU_OFFICIAL_CLI", str(binary))
+    response = CompletedProcess(
+        [str(binary)],
+        4,
+        stdout='{"Code":30001,"Message":"rate limit exceeded"}\n',
+        stderr="",
+    )
+    scope = "api:profile:default:zhihu_search"
+
+    with patch("zhihu_cli.official.subprocess.run", return_value=response):
+        returned = run_official(["search", "zhihu"], rate_scope=scope)
+
+    assert returned is response
+    assert RateLimiter().status(scope)["last_error"] == "remote_rate_limit"

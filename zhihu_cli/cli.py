@@ -41,6 +41,7 @@ from .commands.interact import (
     vote,
 )
 from .commands.official import api
+from .commands.rate_limit import rate_limit
 from .commands.user import followers, following, user, user_answers, user_articles
 from .config import DEFAULT_TIMEOUT, validate_profile
 from .console import run_tui
@@ -116,6 +117,7 @@ cli.add_command(whoami)
 cli.add_command(account)
 cli.add_command(account, name="accounts")
 cli.add_command(api)
+cli.add_command(rate_limit)
 cli.add_command(guidance)
 cli.add_command(guidance, name="guide")
 cli.add_command(config)

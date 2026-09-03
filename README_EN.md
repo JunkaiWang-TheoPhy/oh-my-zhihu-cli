@@ -31,6 +31,7 @@ Current version: `0.3.0`
 - Search drafts by title or text
 - Isolate multiple accounts with named profiles
 - Configure GET timeout and bounded retries
+- Apply a local hard limit and server cooldown to search requests
 - Block publishing, interaction, and deletion with global `--readonly`
 - Preview answers and comments; require explicit `--execute` to send them
 - Render terminal tables with Rich and support structured JSON output
@@ -147,8 +148,28 @@ zhihu --timeout 30 --retry 2 search "AI"
 - `--timeout` defaults to 15 seconds
 - `--retry` defaults to 0 and accepts up to 5 retries
 - Retries apply only to GET requests
+- Rate-limit responses are never automatically retried
 - Publish, interaction, and delete requests are never automatically retried
 - Proxy settings use `HTTP_PROXY`, `HTTPS_PROXY`, and `ALL_PROXY`
+
+## Query rate limits
+
+Search commands use a local hard guard with separate state per account or profile:
+
+- At least 3 seconds between searches
+- At most 10 searches in a 60-second window
+- A 120-second local cooldown after a Zhihu rate-limit response
+- The default state file is `~/.zhihu-cli/rate-limit.json`
+- State stores timestamps, endpoint scopes, and error status only; it never stores query text or credentials
+
+Inspect the status:
+
+```bash
+zhihu rate-limit status
+zhihu rate-limit status --json
+```
+
+After `LOCAL_RATE_LIMIT` or Zhihu `Code=30001`, the CLI does not retry immediately. The AI should reuse existing results or wait for the reported countdown before issuing one minimal request.
 
 ## Write safety
 

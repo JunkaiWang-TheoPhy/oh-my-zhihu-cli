@@ -9,6 +9,7 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from .accounts import active_api_secret
+from .rate_limit import run_limited
 
 
 class OfficialCliError(RuntimeError):
@@ -44,6 +45,7 @@ def run_official(
     input_text: str | None = None,
     timeout: float = 60,
     access_secret: str | None = None,
+    rate_scope: str | None = None,
 ) -> subprocess.CompletedProcess[str]:
     """Run the official CLI without exposing credentials in arguments or logs."""
     binary = get_official_cli_path()
@@ -55,7 +57,7 @@ def run_official(
     if not os.access(binary, os.X_OK):
         raise OfficialCliError(f"Official zhihu-cli is not executable: {binary}")
 
-    try:
+    def execute() -> subprocess.CompletedProcess[str]:
         environment = os.environ.copy()
         named_secret = access_secret or active_api_secret()
         if named_secret:
@@ -69,7 +71,13 @@ def run_official(
             check=False,
             env=environment,
         )
-    except subprocess.TimeoutExpired as exc:
-        raise OfficialCliError("Official zhihu-cli timed out") from exc
-    except OSError as exc:
-        raise OfficialCliError(f"Could not launch official zhihu-cli: {exc}") from exc
+
+    def run() -> subprocess.CompletedProcess[str]:
+        try:
+            return execute()
+        except subprocess.TimeoutExpired as exc:
+            raise OfficialCliError("Official zhihu-cli timed out") from exc
+        except OSError as exc:
+            raise OfficialCliError(f"Could not launch official zhihu-cli: {exc}") from exc
+
+    return run_limited(rate_scope, run) if rate_scope else run()

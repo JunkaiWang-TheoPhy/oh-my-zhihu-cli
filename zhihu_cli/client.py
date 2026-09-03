@@ -97,6 +97,8 @@ class ZhihuClient:
             raise LoginError("Session expired or not logged in")
         if resp.status_code == 403:
             raise LoginError("Access denied — check login status")
+        if resp.status_code == 429:
+            raise DataFetchError("Zhihu rate limit exceeded (HTTP 429)")
         if resp.status_code != 200:
             raise DataFetchError(
                 f"API request failed with status {resp.status_code}: {resp.text[:200]}"
